@@ -776,7 +776,6 @@ def import_students():
         return redirect(url_for("students_manage"))
 
     try:
-        # قراءة الملف عبر BytesIO لمنع مشاكل الـ stream والترميز مع pandas
         file_bytes = file.read()
         file_stream = io.BytesIO(file_bytes)
 
@@ -789,10 +788,10 @@ def import_students():
         else:
             df = pd.read_excel(file_stream)
 
-        qr_dir = os.path.join(app.static_folder or "static", "qrcodes")
+        # استخدام المسار المطلق الآمن لمجلد الـ QR
+        qr_dir = os.path.join(app.root_path, "static", "qrcodes")
         os.makedirs(qr_dir, exist_ok=True)
 
-        # دالة مساعدة لتنظيف وتحويل القيم إلى نص نقي آمن لقاعدة البيانات
         def clean_val(val):
             if val is None or pd.isna(val):
                 return ""
@@ -802,6 +801,10 @@ def import_students():
             if s.lower() in ["nan", "none", "nat", ""]:
                 return ""
             return s
+
+        # تحميل البيانات مسبقاً في ذاكرة مؤقتة لتقليل استعلامات قاعدة البيانات ومنع انهيار الذاكرة
+        classes_cache = {c.name: c.id for c in SchoolClass.query.all()}
+        parents_cache = {p.telegram_id: p.id for p in Parent.query.all() if p.telegram_id}
 
         added_count = 0
         for _, row in df.iterrows():
@@ -823,21 +826,25 @@ def import_students():
             if not name or not grade_class:
                 continue
 
-            # التأكد من وجود الصف أو إضافته وربطه بـ class_id
-            school_class_obj = SchoolClass.query.filter_by(name=grade_class).first()
-            if not school_class_obj:
-                school_class_obj = SchoolClass(name=grade_class)
-                db.session.add(school_class_obj)
-                db.session.commit()
+            # معالجة الصفوف عبر التخزين المؤقت
+            class_id = classes_cache.get(grade_class)
+            if not class_id:
+                new_class = SchoolClass(name=grade_class)
+                db.session.add(new_class)
+                db.session.flush()  # للحصول على الـ ID فوراً بدون إثقال الخادم
+                class_id = new_class.id
+                classes_cache[grade_class] = class_id
 
-            # التعامل الذكي مع جدول أولياء الأمور
-            parent_obj = None
+            # معالجة أولياء الأمور عبر التخزين المؤقت
+            parent_id = None
             if telegram_id and telegram_id != "0":
-                parent_obj = Parent.query.filter_by(telegram_id=telegram_id).first()
-                if not parent_obj:
-                    parent_obj = Parent(telegram_id=telegram_id, name=f"ولي أمر {name}")
-                    db.session.add(parent_obj)
-                    db.session.commit()
+                parent_id = parents_cache.get(telegram_id)
+                if not parent_id:
+                    new_parent = Parent(telegram_id=telegram_id, name=f"ولي أمر {name}")
+                    db.session.add(new_parent)
+                    db.session.flush()
+                    parent_id = new_parent.id
+                    parents_cache[telegram_id] = parent_id
 
             auto_code = str(generate_student_code())
 
@@ -845,17 +852,19 @@ def import_students():
                 student_code=auto_code,
                 name=name,
                 grade_class=grade_class,
-                class_id=school_class_obj.id,
-                parent_id=parent_obj.id if parent_obj else None,
+                class_id=class_id,
+                parent_id=parent_id,
                 parent_telegram_id=telegram_id if telegram_id and telegram_id != "0" else None,
             )
             db.session.add(new_student)
 
+            # توليد وتخزين رمز الـ QR
             qr_img = qrcode.make(auto_code)
             qr_img.save(os.path.join(qr_dir, f"{auto_code}.png"))
 
             added_count += 1
 
+        # الحفظ النهائي دفعة واحدة لتوفير الذاكرة ومنع الـ 502
         db.session.commit()
         flash(
             f"تمت إضافة {added_count} طالب بنجاح وتوليد رموز الـ QR لهم!",
