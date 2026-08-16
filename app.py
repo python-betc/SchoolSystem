@@ -60,9 +60,6 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 
-with app.app_context():
-    db.create_all()
-
 # توكن بوت التليجرام الخاص بالإشعارات
 TELEGRAM_BOT_TOKEN = "8810713846:AAH8sM_8Hjf60U06BJLxqz9pKUMB1urBXd0"
 
@@ -1873,6 +1870,9 @@ def student_individual_report(student_id):
 # =========================================================================
 # 11. التشغيل وتجهيز البيانات الأولية (Application Entry Point)
 # =========================================================================
+
+with app.app_context():
+    db.create_all()
 
 if __name__ == "__main__":
     with app.app_context():
