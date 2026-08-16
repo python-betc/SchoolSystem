@@ -413,31 +413,32 @@ def telegram_webhook():
     """مسار استقبال الرسائل من تليجرام وتوجيهها لقاعدة البيانات"""
     try:
         json_data = request.get_json(force=True)
-        update = Update.de_json(json_data, bot)
         
-        if update.message and update.message.text:
-            chat_id = str(update.message.chat_id)
-            text = update.message.text.strip()
+        # استخراج الرسالة وبيانات المرسل مباشرة من الـ JSON لتجنب مشاكل توافقية المكتبة مع Flask
+        message = json_data.get("message") or json_data.get("edited_message")
+        if message and "text" in message:
+            chat_id = str(message["chat"]["id"])
+            text = message["text"].strip()
+            telegram_user = message.get("from", {})
             
             with app.app_context():
                 if text.startswith("/start"):
                     msg = (
                         "مرحباً بك في نظام المتابعة المدرسية! 🏫\n\n"
-                        "يرجى إرسال **كود الطالب** الخاص بابنك (مثال: STU-1001) لربط حسابك وتلقي الإشعارات التلقائية."
+                        "يرجى إرسال كود الطالب الخاص بابنك (مثال: STU-1001) لربط حسابك وتلقي الإشعارات التلقائية."
                     )
-                    bot.send_message(chat_id=chat_id, text=msg)
+                    send_telegram_msg(chat_id, msg)
                 else:
                     user_code = text.upper()
                     student = Student.query.filter_by(student_code=user_code).first()
 
                     if student:
                         student.parent_telegram_id = chat_id
-                        telegram_user = update.message.from_user
-                        student.parent_telegram_username = telegram_user.username
+                        student.parent_telegram_username = telegram_user.get("username")
                         
-                        telegram_name = telegram_user.first_name
-                        if telegram_user.last_name:
-                            telegram_name += f" {telegram_user.last_name}"
+                        telegram_name = telegram_user.get("first_name", "")
+                        if telegram_user.get("last_name"):
+                            telegram_name += f" {telegram_user.get('last_name')}"
                         student.parent_telegram_name = telegram_name
                         db.session.commit()
 
@@ -450,11 +451,15 @@ def telegram_webhook():
                     else:
                         response = "❌ كود الطالب غير صحيح! يرجى التأكد من الكود وإعادة إرساله."
                     
-                    # إرسال الرسالة للمستخدم في الحالتين
-                    bot.send_message(chat_id=chat_id, text=response)
+                    # إرسال الرسالة باستخدام دالة الإرسال الآمنة والمستقرة
+                    send_telegram_msg(chat_id, response)
                     
     except Exception as e:
-        print(f"Error in webhook: {e}")
+        import traceback
+        print("========== TELEGRAM ERROR ON RENDER ==========")
+        traceback.print_exc()
+        print(f"Error details: {e}")
+        print("==============================================")
         
     return "OK", 200
 
