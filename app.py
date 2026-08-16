@@ -1874,24 +1874,21 @@ def student_individual_report(student_id):
 with app.app_context():
     db.create_all()
 
+    if not User.query.filter_by(username="admin").first():
+        admin = User(username="admin", name="مدير النظام", role="admin")
+        admin.set_password("admin123")
+        db.session.add(admin)
+
+    if not SystemSettings.query.first():
+        default_settings = SystemSettings(
+            periods_per_absent_day=7,
+            max_absent_days_warning=15,
+            daily_actual_lessons=6,
+        )
+        db.session.add(default_settings)
+
+    db.session.commit()
+
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-
-        if not User.query.filter_by(username="admin").first():
-            admin = User(username="admin", name="مدير النظام", role="admin")
-            admin.set_password("admin123")
-            db.session.add(admin)
-
-        if not SystemSettings.query.first():
-            default_settings = SystemSettings(
-                periods_per_absent_day=7,
-                max_absent_days_warning=15,
-                daily_actual_lessons=6,
-            )
-            db.session.add(default_settings)
-
-        db.session.commit()
-        print("✅ تم تجهيز قاعدة البيانات والحسابات الافتراضية بنجاح!")
-
     app.run(host="0.0.0.0", port=5000, debug=True)
+
