@@ -146,7 +146,9 @@ function printReport() {
 }
 
 function printSingleQR(name, gradeClass, code, qrImgUrl) {
-    printCards([{ name, gradeClass, code, qrImgUrl }]);
+    // استخدام رابط الـ API المباشر بناءً على كود الطالب لضمان عمل الطباعة دائماً
+    let dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${code}`;
+    printCards([{ name, gradeClass, code, qrImgUrl: dynamicQrUrl }]);
 }
 
 function printSelectedQRs() {
