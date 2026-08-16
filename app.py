@@ -29,7 +29,6 @@ from flask_login import (
 )
 from flask_sqlalchemy import SQLAlchemy
 import pandas as pd
-import qrcode
 import requests
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -509,7 +508,7 @@ import requests  # تأكد من استيراد مكتبة requests في أعل�
 @admin_required
 def admin_dashboard():
     # جلب معرف البوت تلقائياً من تليجرام لربطه بالقالب
-    bot_username = "YourBotUsername"
+    bot_username = "Abd_AlMalik_BinMarwan_School"
     try:
         res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe", timeout=2)
         if res.status_code == 200 and res.json().get("ok"):
@@ -782,6 +781,61 @@ def update_attendance_settings():
     flash("تم تحديث لائحة الغياب وعدد حصص اليوم بنجاح!", "success")
     return redirect(url_for("admin_dashboard"))
 
+import telegram
+from telegram import Update
+from flask import request
+
+# تعريف كائن البوت
+bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
+
+@app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
+def telegram_webhook():
+    """مسار استقبال الرسائل من تليجرام وتوجيهها لقاعدة البيانات"""
+    try:
+        json_data = request.get_json(force=True)
+        update = Update.de_json(json_data, bot)
+        
+        if update.message and update.message.text:
+            chat_id = str(update.message.chat_id)
+            text = update.message.text.strip()
+            
+            with app.app_context():
+                if text.startswith("/start"):
+                    msg = (
+                        "مرحباً بك في نظام المتابعة المدرسية! 🏫\n\n"
+                        "يرجى إرسال **كود الطالب** الخاص بابنك (مثال: STU-1001) لربط حسابك وتلقي الإشعارات التلقائية."
+                    )
+                    bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                else:
+                    user_code = text.upper()
+                    student = Student.query.filter_by(student_code=user_code).first()
+
+                    if student:
+                        student.parent_telegram_id = chat_id
+                        telegram_user = update.message.from_user
+                        student.parent_telegram_username = telegram_user.username
+                        
+                        telegram_name = telegram_user.first_name
+                        if telegram_user.last_name:
+                            telegram_name += f" {telegram_user.last_name}"
+                        student.parent_telegram_name = telegram_name
+                        db.session.commit()
+
+                        response = (
+                            f"✅ **تم ربط الحساب بنجاح!**\n\n"
+                            f"👤 **اسم الطالب:** {student.name}\n"
+                            f"📚 **الصف:** {student.grade_class}\n\n"
+                            f"ستصلك الآن تنبيهات الحضور والغياب والسلوك الخاصة بابنك فور حدوثها."
+                        )
+                    else:
+                        response = "❌ كود الطالب غير صحيح! يرجى التأكد من الكود وإعادة إرساله."
+
+                    bot.send_message(chat_id=chat_id, text=response, parse_mode="Markdown")
+                    
+    except Exception as e:
+        print(f"Error in webhook: {e}")
+        
+    return "OK", 200
 
 @app.route("/admin/import_students", methods=["POST"])
 @admin_required
