@@ -1,6 +1,9 @@
 import atexit
 import io
 import os
+import base64
+import qrcode
+from io import BytesIO
 import random
 import string
 from datetime import date, datetime, timedelta
@@ -767,10 +770,6 @@ def update_attendance_settings():
     flash("تم تحديث لائحة الغياب وعدد حصص اليوم بنجاح!", "success")
     return redirect(url_for("admin_dashboard"))
 
-import io
-import base64
-import qrcode
-from io import BytesIO
 
 @app.route("/admin/import_students", methods=["POST"])
 @admin_required
