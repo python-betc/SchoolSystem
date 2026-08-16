@@ -539,7 +539,14 @@ def admin_dashboard():
         .count()
     )
 
-    students = Student.query.order_by(Student.grade_class.asc(), Student.name.asc()).all()
+    # --- التعديل لحماية السيرفر ومنع استهلاك الذاكرة (Pagination) ---
+    page = request.args.get('page', 1, type=int)
+    per_page = 30  # عرض 30 طالباً في الصفحة الواحدة لتخفيف الضغط على الذاكرة العشوائية
+    pagination = Student.query.order_by(Student.grade_class.asc(), Student.name.asc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    students = pagination.items
+    # -------------------------------------------------------------
 
     absences_query = db.session.query(
         Attendance.student_id,
@@ -564,6 +571,7 @@ def admin_dashboard():
         absent_students=absent_students_list,
         leakers_students=leakers_list,
         students=students,
+        pagination=pagination,  # تم تمرير كائن الـ pagination لعرض أزرار التنقل في القالب
         student_absences=student_absences,
         settings=settings,
         teachers=teachers,
