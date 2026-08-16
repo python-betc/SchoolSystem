@@ -503,9 +503,20 @@ def logout():
 # 6. مسارات الإدارة والتحكم (Admin Routes)
 # =========================================================================
 
+import requests  # تأكد من استيراد مكتبة requests في أعلى الملف إذا لم تكن موجودة
+
 @app.route("/admin_dashboard")
 @admin_required
 def admin_dashboard():
+    # جلب معرف البوت تلقائياً من تليجرام لربطه بالقالب
+    bot_username = "YourBotUsername"
+    try:
+        res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe", timeout=2)
+        if res.status_code == 200 and res.json().get("ok"):
+            bot_username = res.json()["result"]["username"]
+    except Exception:
+        pass
+
     today = date.today()
     settings = SystemSettings.query.first()
     target_lessons = settings.daily_actual_lessons if settings else 6
@@ -577,7 +588,7 @@ def admin_dashboard():
         Student.grade_class.asc(), Student.name.asc()
     ).all()
 
-    # التعديل هنا: استخدام Attendance بدلاً من ClassAttendance لقراءة الغياب التام
+    # استخدام Attendance بدلاً من ClassAttendance لقراءة الغياب التام
     absences_query = db.session.query(
         Attendance.student_id,
         db.func.count(db.func.distinct(db.func.date(Attendance.timestamp)))
@@ -601,11 +612,12 @@ def admin_dashboard():
         absent_students=absent_students_list,
         leakers_students=leakers_list,
         students=students,
-        student_absences=student_absences,  # تمرير أيام الغياب للقالب
+        student_absences=student_absences,
         settings=settings,
         teachers=teachers,
         assignments=assignments,
         temp_assignments=temp_assignments,
+        bot_username=bot_username,  # تمرير معرف البوت هنا بنجاح
     )
 
 

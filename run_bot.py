@@ -1,4 +1,5 @@
 import logging
+import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -6,6 +7,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from app import app, db, Student, TELEGRAM_BOT_TOKEN
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -53,10 +55,17 @@ async def handle_student_code(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 if __name__ == '__main__':
-    print("🤖 يتم الآن تشغيل بوت تليجرام للتفاعل مع أولياء الأمور...")
-    bot_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    print("🤖 يتم الآن تشغيل بوت تليجرام للتفاعل مع أولياء الأمور بشكل مستمر...")
+    
+    while True:
+        try:
+            bot_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_student_code))
+            bot_app.add_handler(CommandHandler("start", start))
+            bot_app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_student_code))
 
-    bot_app.run_polling()
+            # تشغيل البوت مع السماح بكل التحديثات
+            bot_app.run_polling(allowed_updates=Update.ALL_TYPES)
+        except Exception as e:
+            logger.error(f"حدث خطأ في اتصال البوت: {e}. جاري إعادة المحاولة خلال 5 ثوانٍ...")
+            time.sleep(5)
