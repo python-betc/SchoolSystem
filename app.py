@@ -767,7 +767,6 @@ def update_attendance_settings():
     flash("تم تحديث لائحة الغياب وعدد حصص اليوم بنجاح!", "success")
     return redirect(url_for("admin_dashboard"))
 
-
 @app.route("/admin/import_students", methods=["POST"])
 @admin_required
 def import_students():
@@ -777,44 +776,51 @@ def import_students():
         return redirect(url_for("students_manage"))
 
     try:
+        # قراءة الملف عبر BytesIO لمنع مشاكل الـ stream والترميز مع pandas
+        file_bytes = file.read()
+        file_stream = io.BytesIO(file_bytes)
+
         if file.filename.endswith(".csv"):
             try:
-                df = pd.read_csv(file, encoding="utf-8-sig")
+                df = pd.read_csv(file_stream, encoding="utf-8-sig")
             except UnicodeDecodeError:
-                file.seek(0)
-                df = pd.read_csv(file, encoding="cp1256")
+                file_stream.seek(0)
+                df = pd.read_csv(file_stream, encoding="cp1256")
         else:
-            df = pd.read_excel(file)
+            df = pd.read_excel(file_stream)
 
         qr_dir = os.path.join(app.static_folder or "static", "qrcodes")
         os.makedirs(qr_dir, exist_ok=True)
 
+        # دالة مساعدة لتنظيف وتحويل القيم إلى نص نقي آمن لقاعدة البيانات
+        def clean_val(val):
+            if val is None or pd.isna(val):
+                return ""
+            if isinstance(val, bytes):
+                val = val.decode("utf-8", "ignore")
+            s = str(val).strip()
+            if s.lower() in ["nan", "none", "nat", ""]:
+                return ""
+            return s
+
         added_count = 0
         for _, row in df.iterrows():
-            name = str(
-                row.get("اسم الطالب", "")
-                or row.get("الاسم", "")
-                or row.get("name", "")
-                or ""
-            ).strip()
-            grade_class = str(
-                row.get("الصف والشعبة", "")
-                or row.get("الصف", "")
-                or row.get("grade_class", "")
-                or ""
-            ).strip()
-            telegram_id = str(
-                row.get("تليجرام", "")
-                or row.get("telegram_id", "")
-                or ""
-            ).strip()
+            name = (
+                clean_val(row.get("اسم الطالب"))
+                or clean_val(row.get("الاسم"))
+                or clean_val(row.get("name"))
+            )
+            grade_class = (
+                clean_val(row.get("الصف والشعبة"))
+                or clean_val(row.get("الصف"))
+                or clean_val(row.get("grade_class"))
+            )
+            telegram_id = (
+                clean_val(row.get("تليجرام"))
+                or clean_val(row.get("telegram_id"))
+            )
 
-            if (
-                    not name
-                    or name.lower() == "nan"
-                    or not grade_class
-                    or grade_class.lower() == "nan"
-            ):
+            if not name or not grade_class:
                 continue
 
             # التأكد من وجود الصف أو إضافته وربطه بـ class_id
@@ -826,14 +832,14 @@ def import_students():
 
             # التعامل الذكي مع جدول أولياء الأمور
             parent_obj = None
-            if telegram_id and telegram_id.lower() != "nan":
+            if telegram_id and telegram_id != "0":
                 parent_obj = Parent.query.filter_by(telegram_id=telegram_id).first()
                 if not parent_obj:
                     parent_obj = Parent(telegram_id=telegram_id, name=f"ولي أمر {name}")
                     db.session.add(parent_obj)
                     db.session.commit()
 
-            auto_code = generate_student_code()
+            auto_code = str(generate_student_code())
 
             new_student = Student(
                 student_code=auto_code,
@@ -841,11 +847,7 @@ def import_students():
                 grade_class=grade_class,
                 class_id=school_class_obj.id,
                 parent_id=parent_obj.id if parent_obj else None,
-                parent_telegram_id=(
-                    telegram_id
-                    if telegram_id and telegram_id.lower() != "nan"
-                    else None
-                ),
+                parent_telegram_id=telegram_id if telegram_id and telegram_id != "0" else None,
             )
             db.session.add(new_student)
 
@@ -862,7 +864,7 @@ def import_students():
 
     except Exception as e:
         db.session.rollback()
-        flash(f"حدث خطأ أثناء قراءة الملف: {str(e)}", "danger")
+        flash(f"حدث خطأ أثناء قراءة الملف أو حفظ البيانات: {str(e)}", "danger")
 
     return redirect(url_for("students_manage"))
 
