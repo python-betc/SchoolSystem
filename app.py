@@ -31,6 +31,8 @@ from flask_sqlalchemy import SQLAlchemy
 import pandas as pd
 import requests
 from werkzeug.security import check_password_hash, generate_password_hash
+import telegram
+from telegram import Update
 
 # =========================================================================
 # 1. إعدادات التطبيق وقاعدة البيانات وبوت التليجرام
@@ -44,14 +46,11 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_recycle": 300,
 }
 if database_url:
-    # تعديل رابط قاعدة البيانات إذا كان يبدأ بـ postgres:// ليناسب SQLAlchemy
     if database_url.startswith("postgres://"):
         database_url = database_url.replace("postgres://", "postgresql://", 1)
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 else:
-    # القيمة الافتراضية للعمل محلياً
     app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///school.db"
-# --- نهاية التعديل ---
 
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SECRET_KEY"] = "super_secret_key_12345"
@@ -65,11 +64,13 @@ login_manager.login_view = "login"
 # توكن بوت التليجرام الخاص بالإشعارات
 TELEGRAM_BOT_TOKEN = "8810713846:AAH8sM_8Hjf60U06BJLxqz9pKUMB1urBXd0"
 
+# تعريف كائن البوت للتليجرام
+bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
+
 
 # =========================================================================
-# 2. نماذج قاعدة البيانات (Database Models المتكاملة والقوية)
+# 2. نماذج قاعدة البيانات (Database Models)
 # =========================================================================
-
 
 class User(db.Model, UserMixin):
     __tablename__ = "user"
@@ -79,8 +80,6 @@ class User(db.Model, UserMixin):
     password_hash = db.Column(db.String(255), nullable=False)
     name = db.Column(db.String(100), nullable=False)
     role = db.Column(db.String(20), nullable=False)
-
-    # وقت انتهاء صلاحية المسح المخصصة لهذا المعلم
     gate_scan_unlock_until = db.Column(db.DateTime, nullable=True)
 
     assignments = db.relationship(
@@ -101,8 +100,6 @@ class User(db.Model, UserMixin):
 
 
 class Parent(db.Model):
-    """جدول أولياء الأمور (رقم فريد لدعم عدة أبناء لنفس ولي الأمر وتليجرام موحد)."""
-
     __tablename__ = "parent"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -110,13 +107,10 @@ class Parent(db.Model):
     telegram_id = db.Column(db.String(50), unique=True, nullable=True)
     telegram_username = db.Column(db.String(100), nullable=True)
 
-    # علاقة تتيح معرفة جميع أبناء ولي الأمر في المدرسة بسهولة تامة
     students = db.relationship("Student", backref="parent", lazy=True)
 
 
 class SchoolClass(db.Model):
-    """جدول الصفوف والشعب الدراسية."""
-
     __tablename__ = "school_class"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -132,8 +126,6 @@ class SchoolClass(db.Model):
 
 
 class Subject(db.Model):
-    """جدول المواد التعليمية."""
-
     __tablename__ = "subject"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -147,28 +139,21 @@ class Subject(db.Model):
 
 
 class Student(db.Model):
-    """جدول بيانات الطلاب والإحصائيات التراكمية للحضور والنقاط مع ربط محكم بالصف ولي الأمر."""
-
     __tablename__ = "student"
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     student_code = db.Column(db.String(30), unique=True, nullable=False)
 
-    # الربط الأساسي السليم مع جدول الصفوف ومع الاحتفاظ بالنص للتوافقية
     class_id = db.Column(db.Integer, db.ForeignKey("school_class.id"), nullable=True)
     grade_class = db.Column(db.String(50), nullable=False)
-
-    # الربط الاحترافي بجدول أولياء الأمور
     parent_id = db.Column(db.Integer, db.ForeignKey("parent.id"), nullable=True)
 
-    # حقول توافقية لتليجرام ولي الأمر مباشرة للسرعة والتقارير
     parent_telegram_id = db.Column(db.String(50), nullable=True)
     parent_telegram_username = db.Column(db.String(100), nullable=True)
     parent_telegram_name = db.Column(db.String(150), nullable=True)
 
     points = db.Column(db.Integer, default=100)
-
     absent_periods_count = db.Column(db.Integer, default=0)
     absent_days_count = db.Column(db.Integer, default=0)
     warning_sent = db.Column(db.Boolean, default=False)
@@ -200,20 +185,12 @@ class Student(db.Model):
 
 
 class TeacherAssignment(db.Model):
-    """جدول إسناد المواد والصفوف للمعلمين (دائم طوال الفصل الدراسي)."""
-
     __tablename__ = "teacher_assignment"
 
     id = db.Column(db.Integer, primary_key=True)
-    teacher_id = db.Column(
-        db.Integer, db.ForeignKey("user.id"), nullable=False
-    )
-    class_id = db.Column(
-        db.Integer, db.ForeignKey("school_class.id"), nullable=False
-    )
-    subject_id = db.Column(
-        db.Integer, db.ForeignKey("subject.id"), nullable=False
-    )
+    teacher_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    class_id = db.Column(db.Integer, db.ForeignKey("school_class.id"), nullable=False)
+    subject_id = db.Column(db.Integer, db.ForeignKey("subject.id"), nullable=False)
 
     temporary_assignments = db.relationship(
         "TemporaryAssignment",
@@ -224,74 +201,46 @@ class TeacherAssignment(db.Model):
 
 
 class TemporaryAssignment(db.Model):
-    """جدول إسناد حصص المعلم الغائب لمعلم بديل مؤقتاً ليوم واحد فقط."""
-
     __tablename__ = "temporary_assignment"
 
     id = db.Column(db.Integer, primary_key=True)
-    original_teacher_id = db.Column(
-        db.Integer, db.ForeignKey("user.id"), nullable=False
-    )
-    substitute_teacher_id = db.Column(
-        db.Integer, db.ForeignKey("user.id"), nullable=False
-    )
-    assignment_id = db.Column(
-        db.Integer, db.ForeignKey("teacher_assignment.id"), nullable=False
-    )
+    original_teacher_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    substitute_teacher_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    assignment_id = db.Column(db.Integer, db.ForeignKey("teacher_assignment.id"), nullable=False)
     date = db.Column(db.Date, default=date.today)
 
-    original_teacher = db.relationship(
-        "User", foreign_keys=[original_teacher_id]
-    )
-    substitute_teacher = db.relationship(
-        "User", foreign_keys=[substitute_teacher_id]
-    )
+    original_teacher = db.relationship("User", foreign_keys=[original_teacher_id])
+    substitute_teacher = db.relationship("User", foreign_keys=[substitute_teacher_id])
 
 
 class Attendance(db.Model):
-    """جدول سجلات الحضور عند بوابة المدرسة."""
-
     __tablename__ = "attendance"
 
     id = db.Column(db.Integer, primary_key=True)
-    student_id = db.Column(
-        db.Integer, db.ForeignKey("student.id"), nullable=False
-    )
-    type = db.Column(db.String(20), default="gate")  # 'gate'
+    student_id = db.Column(db.Integer, db.ForeignKey("student.id"), nullable=False)
+    type = db.Column(db.String(20), default="gate")
     timestamp = db.Column(db.DateTime, default=datetime.now)
 
 
 class ClassAttendance(db.Model):
-    """جدول الحضور داخل الحصص الدراسية والتقييم السلوكي."""
-
     __tablename__ = "class_attendance"
 
     id = db.Column(db.Integer, primary_key=True)
-    student_id = db.Column(
-        db.Integer, db.ForeignKey("student.id"), nullable=False
-    )
-    teacher_id = db.Column(
-        db.Integer, db.ForeignKey("user.id"), nullable=False
-    )
+    student_id = db.Column(db.Integer, db.ForeignKey("student.id"), nullable=False)
+    teacher_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     subject_name = db.Column(db.String(50))
     class_name = db.Column(db.String(50))
-    type = db.Column(
-        db.String(20), nullable=False
-    )  # 'gate', 'class_attendance', 'behavior_eval'
+    type = db.Column(db.String(20), nullable=False)
     points_change = db.Column(db.Integer, default=0)
     note = db.Column(db.Text)
     timestamp = db.Column(db.DateTime, default=datetime.now)
 
 
 class BehaviorLog(db.Model):
-    """جدول سجل السلوك النقاطي التراكمي للطالب."""
-
     __tablename__ = "behavior_log"
 
     id = db.Column(db.Integer, primary_key=True)
-    student_id = db.Column(
-        db.Integer, db.ForeignKey("student.id"), nullable=False
-    )
+    student_id = db.Column(db.Integer, db.ForeignKey("student.id"), nullable=False)
     points_change = db.Column(db.Integer)
     reason = db.Column(db.String(200))
     teacher_name = db.Column(db.String(50))
@@ -299,33 +248,21 @@ class BehaviorLog(db.Model):
 
 
 class SystemSettings(db.Model):
-    """جدول إعدادات النظام للغياب والتنبيهات وعدد الحصص الفعالة اليومية."""
-
     __tablename__ = "system_settings"
 
     id = db.Column(db.Integer, primary_key=True)
     periods_per_absent_day = db.Column(db.Integer, default=7)
     max_absent_days_warning = db.Column(db.Integer, default=15)
-    daily_actual_lessons = db.Column(
-        db.Integer, default=6
-    )  # عدد الحصص الفعلية اليوم
-    gate_scan_lock_until = (
-        db.Column(db.DateTime, nullable=True)
-    )  # وقت انتهاء القفل عامة
-    gate_cutoff_time = db.Column(
-        db.String(5), default="08:30"
-    )  # وقت قفل البوابة اليومي
+    daily_actual_lessons = db.Column(db.Integer, default=6)
+    gate_scan_lock_until = db.Column(db.DateTime, nullable=True)
+    gate_cutoff_time = db.Column(db.String(5), default="08:30")
 
 
 class ParentNotification(db.Model):
-    """جدول أرشفة الإشعارات الموجهة لأولياء الأمور."""
-
     __tablename__ = "parent_notification"
 
     id = db.Column(db.Integer, primary_key=True)
-    student_id = db.Column(
-        db.Integer, db.ForeignKey("student.id"), nullable=False
-    )
+    student_id = db.Column(db.Integer, db.ForeignKey("student.id"), nullable=False)
     title = db.Column(db.String(100), nullable=False)
     message = db.Column(db.Text, nullable=False)
     date = db.Column(db.DateTime, default=datetime.now)
@@ -334,7 +271,6 @@ class ParentNotification(db.Model):
 # =========================================================================
 # 3. الدوال المساعدة والأدوات (Helper Functions)
 # =========================================================================
-
 
 def send_telegram_msg(chat_id, text):
     """إرسال رسالة فورية عبر بوت التليجرام إلى ولي الأمر."""
@@ -381,35 +317,11 @@ def send_parent_warning_notification(student):
         target_chat_id = student.parent.telegram_id
 
     if target_chat_id:
-        send_telegram_msg(
-            target_chat_id, f"🚨 *{msg_title}*\n\n{msg_body}"
-        )
-
-
-def check_and_process_absence(student):
-    """احتساب غياب الحصص وتحويله لأيام كاملة وتطبيق قوانين الإنذار."""
-    settings = SystemSettings.query.first()
-    periods_limit = settings.periods_per_absent_day if settings else 7
-    days_limit = settings.max_absent_days_warning if settings else 15
-
-    student.absent_periods_count += 1
-
-    if student.absent_periods_count >= periods_limit:
-        new_days = student.absent_periods_count // periods_limit
-        student.absent_days_count += new_days
-        student.absent_periods_count = (
-                student.absent_periods_count % periods_limit
-        )
-
-    if student.absent_days_count >= days_limit and not student.warning_sent:
-        send_parent_warning_notification(student)
-        student.warning_sent = True
-
-    db.session.commit()
+        send_telegram_msg(target_chat_id, f"🚨 *{msg_title}*\n\n{msg_body}")
 
 
 def generate_student_code():
-    """توليد رمز فريد ومميز للطالب بشكل أوتوماتيكي (مثل STU-1234)."""
+    """توليد رمز فريد ومميز للطالب بشكل أوتوماتيكي."""
     while True:
         code = "STU-" + "".join(random.choices(string.digits, k=4))
         if not Student.query.filter_by(student_code=code).first():
@@ -419,7 +331,6 @@ def generate_student_code():
 # =========================================================================
 # 4. دالات الحماية والتحقق من الصلاحيات (Decorators & Authentication)
 # =========================================================================
-
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -440,10 +351,7 @@ def admin_required(f):
 def teacher_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not current_user.is_authenticated or current_user.role not in [
-            "teacher",
-            "admin",
-        ]:
+        if not current_user.is_authenticated or current_user.role not in ["teacher", "admin"]:
             flash("عذراً، هذه الصفحة مخصصة للمعلمين.", "danger")
             return redirect(url_for("login"))
         return f(*args, **kwargs)
@@ -454,7 +362,6 @@ def teacher_required(f):
 # =========================================================================
 # 5. مسارات المصادقة والتوجيه الرئيسي (Auth Routes)
 # =========================================================================
-
 
 @app.route("/")
 def index():
@@ -475,7 +382,6 @@ def login():
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
-
         user = User.query.filter_by(username=username).first()
 
         if user and user.check_password(password):
@@ -499,15 +405,62 @@ def logout():
 
 
 # =========================================================================
-# 6. مسارات الإدارة والتحكم (Admin Routes)
+# 6. مسارات الإدارة والتحكم وتليجرام (Admin & Webhook Routes)
 # =========================================================================
 
-import requests  # تأكد من استيراد مكتبة requests في أعلى الملف إذا لم تكن موجودة
+@app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
+def telegram_webhook():
+    """مسار استقبال الرسائل من تليجرام وتوجيهها لقاعدة البيانات"""
+    try:
+        json_data = request.get_json(force=True)
+        update = Update.de_json(json_data, bot)
+        
+        if update.message and update.message.text:
+            chat_id = str(update.message.chat_id)
+            text = update.message.text.strip()
+            
+            with app.app_context():
+                if text.startswith("/start"):
+                    msg = (
+                        "مرحباً بك في نظام المتابعة المدرسية! 🏫\n\n"
+                        "يرجى إرسال **كود الطالب** الخاص بابنك (مثال: STU-1001) لربط حسابك وتلقي الإشعارات التلقائية."
+                    )
+                    bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                else:
+                    user_code = text.upper()
+                    student = Student.query.filter_by(student_code=user_code).first()
+
+                    if student:
+                        student.parent_telegram_id = chat_id
+                        telegram_user = update.message.from_user
+                        student.parent_telegram_username = telegram_user.username
+                        
+                        telegram_name = telegram_user.first_name
+                        if telegram_user.last_name:
+                            telegram_name += f" {telegram_user.last_name}"
+                        student.parent_telegram_name = telegram_name
+                        db.session.commit()
+
+                        response = (
+                            f"✅ **تم ربط الحساب بنجاح!**\n\n"
+                            f"👤 **اسم الطالب:** {student.name}\n"
+                            f"📚 **الصف:** {student.grade_class}\n\n"
+                            f"ستصلك الآن تنبيهات الحضور والغياب والسلوك الخاصة بابنك فور حدوثها."
+                        )
+                    else:
+                        response = "❌ كود الطالب غير صحيح! يرجى التأكد من الكود وإعادة إرساله."
+
+                    bot.send_message(chat_id=chat_id, text=response, parse_mode="Markdown")
+                    
+    except Exception as e:
+        print(f"Error in webhook: {e}")
+        
+    return "OK", 200
+
 
 @app.route("/admin_dashboard")
 @admin_required
 def admin_dashboard():
-    # جلب معرف البوت تلقائياً من تليجرام لربطه بالقالب
     bot_username = "Abd_AlMalik_BinMarwan_School"
     try:
         res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe", timeout=2)
@@ -519,20 +472,17 @@ def admin_dashboard():
     today = date.today()
     settings = SystemSettings.query.first()
     target_lessons = settings.daily_actual_lessons if settings else 6
-
     total_students = Student.query.count()
 
     gate_attendance_ids = [
-        a.student_id
-        for a in Attendance.query.filter(
+        a.student_id for a in Attendance.query.filter(
             Attendance.type == "gate",
             db.func.date(Attendance.timestamp) == today,
         ).all()
     ]
 
     teacher_gate_ids = [
-        a.student_id
-        for a in ClassAttendance.query.filter(
+        a.student_id for a in ClassAttendance.query.filter(
             ClassAttendance.type == "gate",
             db.func.date(ClassAttendance.timestamp) == today,
         ).all()
@@ -583,11 +533,8 @@ def admin_dashboard():
         .count()
     )
 
-    students = Student.query.order_by(
-        Student.grade_class.asc(), Student.name.asc()
-    ).all()
+    students = Student.query.order_by(Student.grade_class.asc(), Student.name.asc()).all()
 
-    # استخدام Attendance بدلاً من ClassAttendance لقراءة الغياب التام
     absences_query = db.session.query(
         Attendance.student_id,
         db.func.count(db.func.distinct(db.func.date(Attendance.timestamp)))
@@ -616,7 +563,7 @@ def admin_dashboard():
         teachers=teachers,
         assignments=assignments,
         temp_assignments=temp_assignments,
-        bot_username=bot_username,  # تمرير معرف البوت هنا بنجاح
+        bot_username=bot_username,
     )
 
 
@@ -635,10 +582,7 @@ def notify_parent():
         student.parent.telegram_id if student and student.parent else None)
 
     if not student or not chat_id:
-        flash(
-            f"الطالب {student.name if student else ''} غير مربوط بحساب تليجرام لولي الأمر!",
-            "warning",
-        )
+        flash(f"الطالب {student.name if student else ''} غير مربوط بحساب تليجرام لولي الأمر!", "warning")
         return redirect("/admin_dashboard")
 
     today_str = date.today().strftime("%Y-%m-%d")
@@ -661,17 +605,10 @@ def notify_parent():
         )
 
     success = send_telegram_msg(chat_id, alert_msg)
-
     if success:
-        flash(
-            f"تم إرسال تنبيه الـ Telegram لولي أمر الطالب ({student.name}) بنجاح! 📲",
-            "success",
-        )
+        flash(f"تم إرسال تنبيه الـ Telegram لولي أمر الطالب ({student.name}) بنجاح! 📲", "success")
     else:
-        flash(
-            f"فشل إرسال الرسالة عبر التليجرام، تحقق من اتصال البوت.",
-            "danger",
-        )
+        flash(f"فشل إرسال الرسالة عبر التليجرام، تحقق من اتصال البوت.", "danger")
 
     return redirect("/admin_dashboard")
 
@@ -681,15 +618,13 @@ def notify_parent():
 def notify_all_absent():
     today = date.today()
     gate_ids = [
-        a.student_id
-        for a in Attendance.query.filter(
+        a.student_id for a in Attendance.query.filter(
             Attendance.type == "gate",
             db.func.date(Attendance.timestamp) == today,
         ).all()
     ]
     teacher_gate_ids = [
-        a.student_id
-        for a in ClassAttendance.query.filter(
+        a.student_id for a in ClassAttendance.query.filter(
             ClassAttendance.type == "gate",
             db.func.date(ClassAttendance.timestamp) == today,
         ).all()
@@ -714,10 +649,7 @@ def notify_all_absent():
             if send_telegram_msg(chat_id, alert_msg):
                 sent_count += 1
 
-    flash(
-        f"تم إرسال إشعارات الغياب بنجاح إلى ({sent_count}) من أولياء الأمور! 📲",
-        "success",
-    )
+    flash(f"تم إرسال إشعارات الغياب بنجاح إلى ({sent_count}) من أولياء الأمور! 📲", "success")
     return redirect("/admin_dashboard")
 
 
@@ -781,61 +713,6 @@ def update_attendance_settings():
     flash("تم تحديث لائحة الغياب وعدد حصص اليوم بنجاح!", "success")
     return redirect(url_for("admin_dashboard"))
 
-import telegram
-from telegram import Update
-from flask import request
-
-# تعريف كائن البوت
-bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-
-@app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
-def telegram_webhook():
-    """مسار استقبال الرسائل من تليجرام وتوجيهها لقاعدة البيانات"""
-    try:
-        json_data = request.get_json(force=True)
-        update = Update.de_json(json_data, bot)
-        
-        if update.message and update.message.text:
-            chat_id = str(update.message.chat_id)
-            text = update.message.text.strip()
-            
-            with app.app_context():
-                if text.startswith("/start"):
-                    msg = (
-                        "مرحباً بك في نظام المتابعة المدرسية! 🏫\n\n"
-                        "يرجى إرسال **كود الطالب** الخاص بابنك (مثال: STU-1001) لربط حسابك وتلقي الإشعارات التلقائية."
-                    )
-                    bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
-                else:
-                    user_code = text.upper()
-                    student = Student.query.filter_by(student_code=user_code).first()
-
-                    if student:
-                        student.parent_telegram_id = chat_id
-                        telegram_user = update.message.from_user
-                        student.parent_telegram_username = telegram_user.username
-                        
-                        telegram_name = telegram_user.first_name
-                        if telegram_user.last_name:
-                            telegram_name += f" {telegram_user.last_name}"
-                        student.parent_telegram_name = telegram_name
-                        db.session.commit()
-
-                        response = (
-                            f"✅ **تم ربط الحساب بنجاح!**\n\n"
-                            f"👤 **اسم الطالب:** {student.name}\n"
-                            f"📚 **الصف:** {student.grade_class}\n\n"
-                            f"ستصلك الآن تنبيهات الحضور والغياب والسلوك الخاصة بابنك فور حدوثها."
-                        )
-                    else:
-                        response = "❌ كود الطالب غير صحيح! يرجى التأكد من الكود وإعادة إرساله."
-
-                    bot.send_message(chat_id=chat_id, text=response, parse_mode="Markdown")
-                    
-    except Exception as e:
-        print(f"Error in webhook: {e}")
-        
-    return "OK", 200
 
 @app.route("/admin/import_students", methods=["POST"])
 @admin_required
@@ -923,10 +800,7 @@ def import_students():
             added_count += 1
 
         db.session.commit()
-        flash(
-            f"تمت إضافة {added_count} طالب بنجاح!",
-            "success",
-        )
+        flash(f"تمت إضافة {added_count} طالب بنجاح!", "success")
 
     except Exception as e:
         db.session.rollback()
@@ -959,9 +833,7 @@ def manage_assignments():
                 else:
                     db.session.add(Subject(name=subject_name))
                     db.session.commit()
-                    flash(
-                        f'✅ تم إضافة المادة "{subject_name}" بنجاح.', "success"
-                    )
+                    flash(f'✅ تم إضافة المادة "{subject_name}" بنجاح.', "success")
 
         elif action in ["assign", "assign_teacher"]:
             teacher_id = request.form.get("teacher_id")
@@ -976,9 +848,7 @@ def manage_assignments():
                 ).first()
 
                 if existing_assignment:
-                    flash(
-                        "⚠️ هذا الإسناد موجود بالفعل لهذا المعلم!", "warning"
-                    )
+                    flash("⚠️ هذا الإسناد موجود بالفعل لهذا المعلم!", "warning")
                 else:
                     assignment = TeacherAssignment(
                         teacher_id=teacher_id,
@@ -1086,10 +956,7 @@ def reset_teacher_password(teacher_id):
     if new_password and teacher.role == "teacher":
         teacher.set_password(new_password)
         db.session.commit()
-        flash(
-            f"تم إعادة تعيين كلمة المرور للمعلم ({teacher.name}) بنجاح!",
-            "success",
-        )
+        flash(f"تم إعادة تعيين كلمة المرور للمعلم ({teacher.name}) بنجاح!", "success")
     else:
         flash("حدث خطأ أثناء تغيير كلمة المرور.", "danger")
 
@@ -1105,14 +972,12 @@ def students_manage():
         parent_telegram_id = request.form.get("parent_telegram_id")
         parent_telegram_username = request.form.get("parent_telegram_username")
 
-        # ربط الصف بجدول الصفوف واستخراج class_id
         school_class_obj = SchoolClass.query.filter_by(name=grade_class).first()
         if not school_class_obj:
             school_class_obj = SchoolClass(name=grade_class)
             db.session.add(school_class_obj)
             db.session.commit()
 
-        # التعامل مع جدول ولي الأمر الموحد
         parent_obj = None
         if parent_telegram_id:
             parent_obj = Parent.query.filter_by(telegram_id=parent_telegram_id).first()
@@ -1147,20 +1012,12 @@ def students_manage():
         flash(f"تمت إضافة الطالب بنجاح! الكود المولد: {auto_code}", "success")
         return redirect(url_for("students_manage"))
 
-    student_classes = [
-        s[0]
-        for s in db.session.query(Student.grade_class).distinct().all()
-        if s[0]
-    ]
+    student_classes = [s[0] for s in db.session.query(Student.grade_class).distinct().all() if s[0]]
     db_classes = [c.name for c in SchoolClass.query.all()]
     all_classes = sorted(list(set(student_classes + db_classes)))
 
-    students = Student.query.order_by(
-        Student.grade_class.asc(), Student.name.asc()
-    ).all()
-    return render_template(
-        "students.html", students=students, classes=all_classes
-    )
+    students = Student.query.order_by(Student.grade_class.asc(), Student.name.asc()).all()
+    return render_template("students.html", students=students, classes=all_classes)
 
 
 @app.route("/admin/students/edit/<int:student_id>", methods=["POST"])
@@ -1177,7 +1034,6 @@ def edit_student(student_id):
     student.name = new_name
     student.grade_class = new_grade
 
-    # تحديث الصف وربطه بـ class_id
     if new_grade:
         school_class_obj = SchoolClass.query.filter_by(name=new_grade).first()
         if not school_class_obj:
@@ -1189,7 +1045,6 @@ def edit_student(student_id):
     student.parent_telegram_id = telegram_id if telegram_id else None
     student.parent_telegram_username = telegram_username if telegram_username else None
 
-    # تحديث جدول ولي الأمر الموحد
     if telegram_id:
         parent_obj = Parent.query.filter_by(telegram_id=telegram_id).first()
         if not parent_obj:
@@ -1221,9 +1076,7 @@ def delete_student(student_id):
     student = Student.query.get_or_404(student_id)
     student_name = student.name
 
-    qr_file = os.path.join(
-        app.static_folder or "static", "qrcodes", f"{student.student_code}.png"
-    )
+    qr_file = os.path.join(app.static_folder or "static", "qrcodes", f"{student.student_code}.png")
     if os.path.exists(qr_file):
         try:
             os.remove(qr_file)
@@ -1256,11 +1109,7 @@ def toggle_gate_lock():
     db.session.commit()
 
     time_str = unlock_until.strftime("%I:%M %p")
-    flash(
-        f"🔓 تم فتح إمكانية مسح البوابة للمعلم ({teacher.name}) لمدة {duration_minutes} دقيقة (حتى الساعة {time_str}).",
-        "success",
-    )
-
+    flash(f"🔓 تم فتح إمكانية مسح البوابة للمعلم ({teacher.name}) لمدة {duration_minutes} دقيقة (حتى الساعة {time_str}).", "success")
     return redirect(request.referrer or url_for("admin_dashboard"))
 
 
@@ -1274,15 +1123,9 @@ def sync_telegram_webhook():
         if res_data.get("ok"):
             bot_name = res_data["result"]["first_name"]
             username = res_data["result"]["username"]
-            flash(
-                f"✅ تم الاتصال ببوت التليجرام بنجاح! اسم البوت: {bot_name} (@{username})",
-                "success",
-            )
+            flash(f"✅ تم الاتصال ببوت التليجرام بنجاح! اسم البوت: {bot_name} (@{username})", "success")
         else:
-            flash(
-                "⚠️ فشل الاتصال ببوت التليجرام، يرجى التأكد من التوكن (Bot Token).",
-                "danger",
-            )
+            flash("⚠️ فشل الاتصال ببوت التليجرام، يرجى التأكد من التوكن (Bot Token).", "danger")
     except Exception as e:
         flash(f"❌ حدث خطأ أثناء الاتصال بالتليجرام: {str(e)}", "danger")
 
@@ -1301,17 +1144,13 @@ def set_gate_cutoff_time():
 
         settings.gate_cutoff_time = cutoff_time
         db.session.commit()
-        flash(
-            f"🔒 تم تحديث وقت القفل التلقائي لشاشة البوابة إلى ({cutoff_time}) بنجاح.",
-            "success",
-        )
+        flash(f"🔒 تم تحديث وقت القفل التلقائي لشاشة البوابة إلى ({cutoff_time}) بنجاح.", "success")
     return redirect(request.referrer or url_for("admin_dashboard"))
 
 
 # =========================================================================
 # 7. مسارات بوابة المعلم وقراءة الـ QR (Teacher Portal Routes)
 # =========================================================================
-
 
 @app.route("/teacher")
 @login_required
@@ -1321,11 +1160,7 @@ def teacher_portal():
     now = datetime.now()
 
     settings = SystemSettings.query.first()
-    cutoff_str = (
-        settings.gate_cutoff_time
-        if (settings and settings.gate_cutoff_time)
-        else "08:30"
-    )
+    cutoff_str = settings.gate_cutoff_time if (settings and settings.gate_cutoff_time) else "08:30"
 
     try:
         cutoff_time = datetime.strptime(cutoff_str, "%H:%M").time()
@@ -1334,32 +1169,23 @@ def teacher_portal():
 
     is_before_cutoff = now.time() < cutoff_time
     is_temporarily_unlocked = (
-            getattr(current_user, "gate_scan_unlock_until", None) is not None
-            and current_user.gate_scan_unlock_until > now
+        getattr(current_user, "gate_scan_unlock_until", None) is not None
+        and current_user.gate_scan_unlock_until > now
     )
 
     show_gate_scan = is_before_cutoff or is_temporarily_unlocked
 
-    my_assignments = TeacherAssignment.query.filter_by(
-        teacher_id=teacher_id
-    ).all()
-
-    temp_assigns = TemporaryAssignment.query.filter_by(
-        substitute_teacher_id=teacher_id, date=today
-    ).all()
+    my_assignments = TeacherAssignment.query.filter_by(teacher_id=teacher_id).all()
+    temp_assigns = TemporaryAssignment.query.filter_by(substitute_teacher_id=teacher_id, date=today).all()
 
     temp_assignment_ids = [t.assignment_id for t in temp_assigns]
     temp_teacher_assignments = (
-        TeacherAssignment.query.filter(
-            TeacherAssignment.id.in_(temp_assignment_ids)
-        ).all()
+        TeacherAssignment.query.filter(TeacherAssignment.id.in_(temp_assignment_ids)).all()
         if temp_assignment_ids
         else []
     )
 
-    all_active_assignments = list(
-        set(my_assignments + temp_teacher_assignments)
-    )
+    all_active_assignments = list(set(my_assignments + temp_teacher_assignments))
 
     selected_class_id = request.args.get("class_id", type=int)
     selected_subject_id = request.args.get("subject_id", type=int)
@@ -1398,11 +1224,7 @@ def teacher_scan_gate():
     now = datetime.now()
 
     settings = SystemSettings.query.first()
-    cutoff_str = (
-        settings.gate_cutoff_time
-        if (settings and settings.gate_cutoff_time)
-        else "08:30"
-    )
+    cutoff_str = settings.gate_cutoff_time if (settings and settings.gate_cutoff_time) else "08:30"
 
     try:
         cutoff_time = datetime.strptime(cutoff_str, "%H:%M").time()
@@ -1411,15 +1233,12 @@ def teacher_scan_gate():
 
     is_before_cutoff = now.time() < cutoff_time
     is_temporarily_unlocked = (
-            getattr(current_user, "gate_scan_unlock_until", None) is not None
-            and current_user.gate_scan_unlock_until > now
+        getattr(current_user, "gate_scan_unlock_until", None) is not None
+        and current_user.gate_scan_unlock_until > now
     )
 
     if not (is_before_cutoff or is_temporarily_unlocked):
-        flash(
-            "🔒 مسح البوابة مقفل حالياً لحسابك. يرجى طلب فتح الصلاحية من إدارة المدرسة.",
-            "danger",
-        )
+        flash("🔒 مسح البوابة مقفل حالياً لحسابك. يرجى طلب فتح الصلاحية من إدارة المدرسة.", "danger")
         return redirect(request.referrer or "/teacher")
 
     student = Student.query.filter_by(student_code=student_code).first()
@@ -1434,14 +1253,9 @@ def teacher_scan_gate():
     ).first()
 
     if already_scanned:
-        flash(
-            f"⚠️ الطالب ({student.name}) مسجل حضوره بالفعل اليوم عند البوابة!",
-            "warning",
-        )
+        flash(f"⚠️ الطالب ({student.name}) مسجل حضوره بالفعل اليوم عند البوابة!", "warning")
     else:
-        new_record = Attendance(
-            student_id=student.id, type="gate", timestamp=now
-        )
+        new_record = Attendance(student_id=student.id, type="gate", timestamp=now)
         db.session.add(new_record)
         db.session.commit()
 
@@ -1487,10 +1301,7 @@ def mark_attendance():
     ).first()
 
     if not gate_scanned and not teacher_gate_scanned:
-        flash(
-            f"🛑 تعذر تسجيل الحضور! الطالب ({student.name}) لم يسجل دخول عند بوابة المدرسة اليوم. يجب مراجعة الإدارة أولاً.",
-            "danger",
-        )
+        flash(f"🛑 تعذر تسجيل الحضور! الطالب ({student.name}) لم يسجل دخول عند بوابة المدرسة اليوم. يجب مراجعة الإدارة أولاً.", "danger")
         return redirect(request.referrer or "/teacher")
 
     already_marked = ClassAttendance.query.filter(
@@ -1503,10 +1314,7 @@ def mark_attendance():
 
     if already_marked:
         time_scanned = already_marked.timestamp.strftime("%I:%M %p")
-        flash(
-            f"⚠️ الطالب ({student.name}) مسجل حضوره بالفعل في هذه الحصة الساعة {time_scanned}!",
-            "warning",
-        )
+        flash(f"⚠️ الطالب ({student.name}) مسجل حضوره بالفعل في هذه الحصة الساعة {time_scanned}!", "warning")
     else:
         now = datetime.now()
         time_str = now.strftime("%I:%M %p")
@@ -1523,10 +1331,7 @@ def mark_attendance():
         db.session.add(attendance)
         db.session.commit()
 
-        flash(
-            f"✅ تم تسجيل حضور الطالب ({student.name}) في الحصة بنجاح الساعة {time_str}",
-            "success",
-        )
+        flash(f"✅ تم تسجيل حضور الطالب ({student.name}) في الحصة بنجاح الساعة {time_str}", "success")
 
     return redirect(request.referrer or "/teacher")
 
@@ -1559,10 +1364,7 @@ def save_behavior():
     db.session.add(behavior_record)
     db.session.commit()
 
-    flash(
-        f"⭐ تم حفظ تقييم السلوك للطالب ({student.name}) | النقاط: {points}",
-        "info",
-    )
+    flash(f"⭐ تم حفظ تقييم السلوك للطالب ({student.name}) | النقاط: {points}", "info")
     return redirect(request.referrer or "/teacher")
 
 
@@ -1574,7 +1376,6 @@ def gate_page():
 # =========================================================================
 # 8. واجهات البرمجة المفتوحة (API Endpoints)
 # =========================================================================
-
 
 @app.route("/api/scan_gate", methods=["POST"])
 def scan_gate():
@@ -1598,12 +1399,10 @@ def scan_gate():
     )
 
     if recent_scan and (now - recent_scan.timestamp).total_seconds() < 300:
-        return jsonify(
-            {
-                "status": "warning",
-                "message": f"تم تسجيل دخول {student.name} مسبقاً!",
-            }
-        )
+        return jsonify({
+            "status": "warning",
+            "message": f"تم تسجيل دخول {student.name} مسبقاً!",
+        })
 
     att = Attendance(student_id=student.id, type="gate", timestamp=now)
     db.session.add(att)
@@ -1621,48 +1420,41 @@ def scan_gate():
         )
         send_telegram_msg(target_chat_id, msg)
 
-    return jsonify(
-        {
-            "status": "success",
-            "student_name": student.name,
-            "grade_class": student.grade_class,
-            "time": now.strftime("%I:%M %p"),
-            "points": student.points,
-        }
-    )
+    return jsonify({
+        "status": "success",
+        "student_name": student.name,
+        "grade_class": student.grade_class,
+        "time": now.strftime("%I:%M %p"),
+        "points": student.points,
+    })
 
 
 @app.route("/api/run_audit_now", methods=["POST"])
 @login_required
 def run_audit_now():
     if current_user.role != "admin":
-        return jsonify(
-            {"status": "error", "message": "غير مصرح لك بهذا الإجراء."}
-        ), 403
+        return jsonify({"status": "error", "message": "غير مصرح لك بهذا الإجراء."}), 403
 
     audit_daily_attendance()
-    return jsonify(
-        {
-            "status": "success",
-            "message": "تم إجراء الفحص الشامل للطلاب وتنبيه الأولياء بنجاح.",
-        }
-    )
+    return jsonify({
+        "status": "success",
+        "message": "تم إجراء الفحص الشامل للطلاب وتنبيه الأولياء بنجاح.",
+    })
 
 
 # =========================================================================
 # 9. التدقيق التلقائي وجدولة المهام (Background Scheduler)
 # =========================================================================
+
 def audit_daily_attendance():
     with app.app_context():
         today = date.today()
         settings = SystemSettings.query.first()
 
-        # جلب الإعدادات (مع وضع قيم افتراضية في حال عدم وجودها)
         target_lessons = settings.daily_actual_lessons if settings else 6
-        periods_limit = settings.periods_per_absent_day if settings else 5  # عدد حصص التسرب التي تعادل يوم غياب
+        periods_limit = settings.periods_per_absent_day if settings else 5
         days_limit = settings.max_absent_days_warning if settings else 15
 
-        # 1. جمع معرفات الطلاب الحاضرين عند البوابة اليوم
         gate_records = Attendance.query.filter(
             Attendance.type == "gate",
             db.func.date(Attendance.timestamp) == today,
@@ -1675,7 +1467,6 @@ def audit_daily_attendance():
 
         present_student_ids = set([r.student_id for r in gate_records] + [tr.student_id for tr in teacher_gate_records])
 
-        # 2. فحص الطلاب المتسربين أو الذين حضروا البوابة ولم يحضروا أي حصة
         for student_id in present_student_ids:
             student = Student.query.get(student_id)
             if not student:
@@ -1687,7 +1478,6 @@ def audit_daily_attendance():
                 db.func.date(ClassAttendance.timestamp) == today,
             ).count()
 
-            # --- حالة الغياب التام: سجل عند البوابة ولم يحضر أي حصة ---
             if attended_classes_count == 0:
                 already_absent_audited = BehaviorLog.query.filter(
                     BehaviorLog.student_id == student.id,
@@ -1698,10 +1488,8 @@ def audit_daily_attendance():
                 if already_absent_audited:
                     continue
 
-                # زيادة أيام الغياب بمقدار يوم واحد
                 student.absent_days_count += 1
 
-                # فحص حد الإنذار
                 if student.absent_days_count >= days_limit and not student.warning_sent:
                     send_parent_warning_notification(student)
                     student.warning_sent = True
@@ -1722,7 +1510,6 @@ def audit_daily_attendance():
                 )
                 db.session.add(absence_record)
 
-                # 💡 إرسال إشعار تليجرام لولي الأمر بالغياب التام
                 target_chat_id = student.parent_telegram_id or (student.parent.telegram_id if student.parent else None)
                 if target_chat_id:
                     absent_msg = (
@@ -1737,7 +1524,6 @@ def audit_daily_attendance():
 
                 continue
 
-            # --- حالة التسرب الجزئي: حضر بعض الحصص وتغيب عن الباقي ---
             already_audited = BehaviorLog.query.filter(
                 BehaviorLog.student_id == student.id,
                 BehaviorLog.reason.like("%تسرب سلوكي%"),
@@ -1750,17 +1536,13 @@ def audit_daily_attendance():
             if attended_classes_count < target_lessons:
                 student.points -= 10
                 missing_classes = target_lessons - attended_classes_count
-
-                # إضافة الحصص المفقودة إلى عمود التسرب
                 student.absent_periods_count += missing_classes
 
-                # إذا تجاوز عدد حصص التسرب الحد المسموح يتم تحويلها ليوم غياب وتصفير/تعديل العداد
                 if student.absent_periods_count >= periods_limit:
                     new_days = student.absent_periods_count // periods_limit
                     student.absent_days_count += new_days
                     student.absent_periods_count = student.absent_periods_count % periods_limit
 
-                # فحص حد الإنذار بعد التحويل
                 if student.absent_days_count >= days_limit and not student.warning_sent:
                     send_parent_warning_notification(student)
                     student.warning_sent = True
@@ -1787,7 +1569,6 @@ def audit_daily_attendance():
                     )
                     send_telegram_msg(target_chat_id, alert_msg)
 
-        # 3. فحص وتسجيل غياب الطلاب الذين لم يسجلوا دخولاً على البوابة نهائياً اليوم (غياب تام)
         all_students = Student.query.all()
         for student in all_students:
             if student.id not in present_student_ids:
@@ -1800,10 +1581,8 @@ def audit_daily_attendance():
                 if already_absent_audited:
                     continue
 
-                # زيادة أيام الغياب بمقدار يوم واحد
                 student.absent_days_count += 1
 
-                # فحص حد الإنذار
                 if student.absent_days_count >= days_limit and not student.warning_sent:
                     send_parent_warning_notification(student)
                     student.warning_sent = True
@@ -1824,7 +1603,6 @@ def audit_daily_attendance():
                 )
                 db.session.add(absence_record)
 
-                # 💡 إرسال إشعار تليجرام لولي الأمر للغياب عن المدرسة نهائياً
                 target_chat_id = student.parent_telegram_id or (student.parent.telegram_id if student.parent else None)
                 if target_chat_id:
                     gate_absent_msg = (
@@ -1837,17 +1615,13 @@ def audit_daily_attendance():
                     )
                     send_telegram_msg(target_chat_id, gate_absent_msg)
 
-        User.query.filter(User.role == "teacher").update(
-            {User.gate_scan_unlock_until: None}
-        )
-
+        User.query.filter(User.role == "teacher").update({User.gate_scan_unlock_until: None})
         db.session.commit()
 
 
 # =========================================================================
 # 10. التقارير والطباعة (Reports Routes)
 # =========================================================================
-
 
 @app.route("/reports/daily_pdf")
 @login_required
@@ -1856,12 +1630,9 @@ def export_daily_pdf():
     settings = SystemSettings.query.first()
     TOTAL_LESSONS = settings.daily_actual_lessons if settings else 6
 
-    all_students = Student.query.order_by(
-        Student.grade_class.asc(), Student.name.asc()
-    ).all()
+    all_students = Student.query.order_by(Student.grade_class.asc(), Student.name.asc()).all()
     gate_attendance_ids = [
-        att.student_id
-        for att in Attendance.query.filter(
+        att.student_id for att in Attendance.query.filter(
             Attendance.type == "gate",
             db.func.date(Attendance.timestamp) == today,
         ).all()
@@ -1881,13 +1652,11 @@ def export_daily_pdf():
             ).count()
 
             if class_count < TOTAL_LESSONS:
-                leakers_students.append(
-                    {
-                        "student": student,
-                        "attended_classes": class_count,
-                        "missing_classes": TOTAL_LESSONS - class_count,
-                    }
-                )
+                leakers_students.append({
+                    "student": student,
+                    "attended_classes": class_count,
+                    "missing_classes": TOTAL_LESSONS - class_count,
+                })
 
     return render_template(
         "daily_report_pdf.html",
@@ -1939,8 +1708,18 @@ def student_individual_report(student_id):
 
 
 # =========================================================================
-# 11. التشغيل وتجهيز البيانات الأولية (Application Entry Point)
+# 11. التشغيل وتجهيز البيانات الأولية وتفعيل جدول المهام (Background Scheduler)
 # =========================================================================
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    func=audit_daily_attendance,
+    trigger="cron",
+    hour=23,
+    minute=0
+)
+scheduler.start()
+atexit.register(lambda: scheduler.shutdown())
 
 with app.app_context():
     db.create_all()
@@ -1962,4 +1741,3 @@ with app.app_context():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-
