@@ -425,7 +425,7 @@ def telegram_webhook():
                         "مرحباً بك في نظام المتابعة المدرسية! 🏫\n\n"
                         "يرجى إرسال **كود الطالب** الخاص بابنك (مثال: STU-1001) لربط حسابك وتلقي الإشعارات التلقائية."
                     )
-                    bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                    bot.send_message(chat_id=chat_id, text=msg)
                 else:
                     user_code = text.upper()
                     student = Student.query.filter_by(student_code=user_code).first()
@@ -442,15 +442,16 @@ def telegram_webhook():
                         db.session.commit()
 
                         response = (
-                            f"✅ **تم ربط الحساب بنجاح!**\n\n"
-                            f"👤 **اسم الطالب:** {student.name}\n"
-                            f"📚 **الصف:** {student.grade_class}\n\n"
+                            f"✅ تم ربط الحساب بنجاح!\n\n"
+                            f"👤 اسم الطالب: {student.name}\n"
+                            f"📚 الصف: {student.grade_class}\n\n"
                             f"ستصلك الآن تنبيهات الحضور والغياب والسلوك الخاصة بابنك فور حدوثها."
                         )
                     else:
                         response = "❌ كود الطالب غير صحيح! يرجى التأكد من الكود وإعادة إرساله."
-
-                    bot.send_message(chat_id=chat_id, text=response, parse_mode="Markdown")
+                    
+                    # إرسال الرسالة للمستخدم في الحالتين
+                    bot.send_message(chat_id=chat_id, text=response)
                     
     except Exception as e:
         print(f"Error in webhook: {e}")
