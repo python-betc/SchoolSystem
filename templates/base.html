@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}نظام المتابعة المدرسية الذكي{% endblock %}</title>
+
+    <!-- Bootstrap 5 RTL CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- CSS العام للنظام -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    <!-- بلوك لإضافة ملفات CSS الخاصة بالصفحات الفرعية -->
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+    <!-- شريط الملاحة الرئيسي -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4 shadow-sm">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">
+                <i class="fa-solid fa-school me-2"></i> النظام المدرسي
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="تنقل القائمة">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    {% if current_user.is_authenticated %}
+                        {% if current_user.role == 'admin' %}
+                            <li class="nav-item">
+                                <a class="nav-link text-white" href="/admin_dashboard">
+                                    <i class="fa-solid fa-chart-line me-1"></i> الإدارة
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link text-white" href="/admin/teachers">
+                                    <i class="fa-solid fa-chalkboard-user me-1"></i> إدارة المعلمين
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link text-white" href="/students_manage">
+                                    <i class="fa-solid fa-users me-1"></i> إدارة الطلاب
+                                </a>
+                            </li>
+                            <!-- زر إدارة الصفوف والمواد والإسناد المضاف حديثاً -->
+                            <li class="nav-item">
+                                <a class="nav-link text-white" href="{{ url_for('manage_assignments') }}">
+                                    <i class="fa-solid fa-book-bookmark me-1"></i> إدارة الصفوف والمواد
+                                </a>
+                            </li>
+                        {% endif %}
+                    {% endif %}
+                </ul>
+
+                <!-- قسم الحساب وزر تسجيل الخروج -->
+                {% if current_user.is_authenticated %}
+                <div class="d-flex align-items-center gap-3 ms-auto">
+                    <span class="text-white fw-bold">
+                        <i class="fa-solid fa-circle-user me-1"></i> {{ current_user.name }}
+                    </span>
+                    <a href="/logout" class="btn btn-outline-light btn-sm fw-bold rounded-pill px-3">
+                        <i class="fa-solid fa-right-from-bracket me-1"></i> تسجيل الخروج
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <!-- الحاوية الرئيسية للمحتوى -->
+    <div class="container pb-5">
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- ملف الجافاسكريبت المجمع للنظام -->
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+    <!-- بلوك لإضافة نصريات JavaScript الخاصة بالصفحات الفرعية -->
+    {% block scripts %}{% endblock %}
+</body>
+</html>

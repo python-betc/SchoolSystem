@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+
+    <!-- 1. قسم إضافة ورفع الطلاب -->
+    <div class="card shadow-sm border-0 mb-4 card-rounded">
+        <div class="card-header bg-white border-bottom-0 pt-3 pb-0">
+            <ul class="nav nav-tabs card-header-tabs" id="studentTab" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active fw-bold text-primary" id="single-add-tab" data-bs-toggle="tab" data-bs-target="#single-add" type="button" role="tab">
+                        <i class="fa-solid fa-user-plus me-1"></i> إضافة طالب جديد
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link fw-bold text-success" id="excel-import-tab" data-bs-toggle="tab" data-bs-target="#excel-import" type="button" role="tab">
+                        <i class="fa-solid fa-file-excel me-1"></i> إضافة طلاب دفعة واحدة (Excel/CSV)
+                    </button>
+                </li>
+            </ul>
+        </div>
+
+        <div class="card-body bg-light p-4 card-body-rounded-bottom">
+            <div class="tab-content" id="studentTabContent">
+
+                <!-- إضافة طالب فردي -->
+                <div class="tab-pane fade show active" id="single-add" role="tabpanel">
+                    <form action="/students_manage" method="POST" class="row g-3 align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold small">اسم الطالب الثلاثي</label>
+                            <input type="text" name="name" class="form-control" required placeholder="أدخل اسم الطالب">
+                        </div>
+
+                        <div class="col-md-2">
+                            <label class="form-label fw-bold small">الصف والفصل</label>
+                            <select name="grade_class" class="form-select" required>
+                                <option value="" selected disabled>اختر الصف...</option>
+                                {% for c in classes %}
+                                    <option value="{{ c }}">{{ c }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="col-md-2">
+                            <label class="form-label fw-bold small">Chat ID ولي الأمر</label>
+                            <input type="text" name="parent_telegram_id" class="form-control" placeholder="مثال: 123456789">
+                        </div>
+
+                        <div class="col-md-2">
+                            <label class="form-label fw-bold small">اسم ولي الأمر (تليجرام)</label>
+                            <input type="text" name="parent_telegram_name" class="form-control" placeholder="اسم الحساب">
+                        </div>
+
+                        <div class="col-md-3">
+                            <button type="submit" class="btn btn-primary w-100 fw-bold">
+                                <i class="fa-solid fa-qrcode me-1"></i> إضافة وتوليد QR
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- رفع ملف Excel -->
+                <div class="tab-pane fade" id="excel-import" role="tabpanel">
+                    <form action="/admin/import_students" method="POST" enctype="multipart/form-data" class="row g-3 align-items-end">
+                        <div class="col-md-9">
+                            <label class="form-label fw-bold small">اختر ملف Excel (.xlsx) أو CSV يحتوي على أعمدة (الاسم، الصف):</label>
+                            <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx, .xls, .csv" required>
+                        </div>
+                        <div class="col-md-3">
+                            <button type="submit" class="btn btn-success w-100 fw-bold btn-sm py-2">
+                                <i class="fa-solid fa-upload me-1"></i> رفع الملف واستيراد
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. شريط البحث السريع وزر الطباعة الجماعية -->
+    <div class="card shadow-sm border-0 mb-3 card-rounded">
+        <div class="card-body py-2 px-3 bg-white">
+            <div class="row align-items-center g-2">
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <span class="input-group-text bg-light text-muted border-end-0"><i class="fa-solid fa-magnifying-glass"></i></span>
+                        <input type="text" id="searchInput" class="form-control border-start-0" placeholder="بحث سريع باسم الطالب أو الكود..." onkeyup="filterStudents()">
+                    </div>
+                </div>
+                <div class="col-md-6 text-end">
+                    <button class="btn btn-dark fw-bold" onclick="printSelectedQRs()">
+                        <i class="fa-solid fa-print me-1 text-warning"></i> طباعة البطاقات المحددة (<span id="selectedCount">0</span>)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. جدول عرض إدارة الطلاب -->
+    <div class="card shadow-sm border-0 card-rounded">
+        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+            <h5 class="mb-0 fw-bold text-dark"><i class="fa-solid fa-users text-primary me-2"></i> سجل الطلاب المدرسية</h5>
+            <span class="badge bg-primary fs-6">العدد الإجمالي: {{ students|length }} طالب</span>
+        </div>
+
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0 text-center" id="studentsTable">
+                    <thead class="table-dark">
+                        <tr>
+                            <th class="col-check">
+                                <input type="checkbox" class="form-check-input" id="selectAll" onclick="toggleSelectAll(this)">
+                            </th>
+                            <th class="col-code">الكود (ID)</th>
+                            <th class="col-name">اسم الطالب</th>
+                            <th class="col-grade">الصف والشعبة</th>
+                            <th>Chat ID ولي الأمر</th>
+                            <th>اسم ولي الأمر (تليجرام)</th>
+                            <th class="col-qr">رمز الـ QR والطباعة</th>
+                            <th class="col-actions">الإجراءات (تعديل / نقل / حذف)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for student in students %}
+                        <tr class="student-row">
+                            <td>
+                                <input type="checkbox" class="form-check-input student-checkbox"
+                                       data-name="{{ student.name }}"
+                                       data-grade="{{ student.grade_class }}"
+                                       data-code="{{ student.student_code }}"
+                                       data-qr="/static/qrcodes/{{ student.student_code }}.png"
+                                       onchange="updateSelectedCount()">
+                            </td>
+                            <td class="fw-bold text-primary search-target"><code>{{ student.student_code }}</code></td>
+                            <td class="fw-bold text-start ps-3 search-target">{{ student.name }}</td>
+                            <td><span class="badge bg-light text-dark border px-3 py-2 fs-6">{{ student.grade_class }}</span></td>
+
+                            <!-- عمود Chat ID لولي الأمر -->
+                            <td>
+                                {% if student.parent_telegram_id %}
+                                    <span class="badge bg-info-subtle text-info border border-info-subtle font-monospace">
+                                        <i class="fa-brands fa-telegram me-1"></i>{{ student.parent_telegram_id }}
+                                    </span>
+                                {% else %}
+                                    <span class="badge bg-light text-muted border">غير مربوط</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- عمود اسم ولي الأمر في تليجرام بدلاً من Username -->
+                            <td>
+                                {% if student.parent_telegram_name %}
+                                    <span class="fw-bold text-dark">
+                                        <i class="fa-brands fa-telegram text-primary me-1"></i>{{ student.parent_telegram_name }}
+                                    </span>
+                                {% else %}
+                                    <span class="badge bg-light text-muted border">-</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                <div class="d-flex align-items-center justify-content-center gap-2">
+                                    <img src="/static/qrcodes/{{ student.student_code }}.png"
+                                         alt="QR Code"
+                                         class="qr-thumb-img"
+                                         onclick="printSingleQR('{{ student.name }}', '{{ student.grade_class }}', '{{ student.student_code }}', '/static/qrcodes/{{ student.student_code }}.png')">
+
+                                    <button class="btn btn-sm btn-outline-dark fw-bold"
+                                            onclick="printSingleQR('{{ student.name }}', '{{ student.grade_class }}', '{{ student.student_code }}', '/static/qrcodes/{{ student.student_code }}.png')">
+                                        <i class="fa-solid fa-print me-1"></i> طباعة
+                                    </button>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="d-flex justify-content-center align-items-center gap-2">
+                                    <!-- زر تعديل / نقل -->
+                                    <button class="btn btn-sm btn-warning fw-bold text-dark px-3"
+                                            data-bs-toggle="modal"
+                                            data-bs-target="#editModal{{ student.id }}"
+                                            onclick="filterBranchesForStudent('{{ student.id }}', '{{ student.grade_class }}')">
+                                        <i class="fa-solid fa-pen-to-square me-1"></i> تعديل / نقل
+                                    </button>
+
+                                    <!-- زر الحذف -->
+                                    <form action="{{ url_for('delete_student', student_id=student.id) }}" method="POST" class="d-inline m-0" onsubmit="return confirm('هل أنت تأكد من حذف الطالب ({{ student.name }}) بشكل نهائي؟');">
+                                        <button type="submit" class="btn btn-sm btn-danger fw-bold px-3">
+                                            <i class="fa-solid fa-trash me-1"></i> حذف
+                                        </button>
+                                    </form>
+                                </div>
+
+                                <!-- نافذة التعديل -->
+                                <div class="modal fade" id="editModal{{ student.id }}" tabindex="-1" aria-hidden="true">
+                                    <div class="modal-dialog modal-dialog-centered">
+                                        <div class="modal-content text-start">
+                                            <form action="{{ url_for('edit_student', student_id=student.id) }}" method="POST">
+                                                <div class="modal-header bg-warning">
+                                                    <h5 class="modal-title fw-bold text-dark"><i class="fa-solid fa-user-gear me-2"></i> تعديل بيانات / نقل الطالب</h5>
+                                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                </div>
+                                                <div class="modal-body text-end">
+                                                    <div class="mb-3">
+                                                        <label class="form-label fw-bold">اسم الطالب</label>
+                                                        <input type="text" name="name" class="form-control" value="{{ student.name }}" required>
+                                                    </div>
+
+                                                    <div class="mb-3">
+                                                        <label class="form-label fw-bold">الشعبة الجديدة لنفس الصف</label>
+                                                        <select name="grade_class" id="select_grade_{{ student.id }}" class="form-select" required>
+                                                            {% for c in classes %}
+                                                                <option value="{{ c }}" {% if c == student.grade_class %}selected{% endif %}>{{ c }}</option>
+                                                            {% endfor %}
+                                                        </select>
+                                                    </div>
+
+                                                    <div class="mb-3">
+                                                        <label class="form-label fw-bold">تليجرام ولي الأمر (Chat ID)</label>
+                                                        <input type="text" name="parent_telegram_id" class="form-control" value="{{ student.parent_telegram_id or '' }}" placeholder="اختياري">
+                                                    </div>
+
+                                                    <div class="mb-3">
+                                                        <label class="form-label fw-bold">اسم ولي الأمر (تليجرام)</label>
+                                                        <input type="text" name="parent_telegram_name" class="form-control" value="{{ student.parent_telegram_name or '' }}" placeholder="اسم الحساب">
+                                                    </div>
+                                                </div>
+                                                <div class="modal-footer bg-light">
+                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+                                                    <button type="submit" class="btn btn-warning fw-bold text-dark">حفظ التغييرات ونقل</button>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="8" class="py-5 text-muted">
+                                <i class="fa-solid fa-users-slash fs-1 d-block mb-2"></i>
+                                لا يوجد طلاب مسجلون حالياً.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% endblock %}

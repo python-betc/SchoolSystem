@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+{% block title %}تسجيل الحصة والتقييم السلوكي{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12 mb-4">
+        <div class="card card-custom p-3">
+            <h4 class="fw-bold text-primary mb-3"><i class="fa-solid fa-chalkboard-user me-2"></i> إدارة الحصة الصفية والسلوك</h4>
+            <div class="row g-2">
+                <div class="col-md-4">
+                    <input type="text" id="searchStudent" class="form-control" placeholder="بحث عن اسم طالب...">
+                </div>
+                <div class="col-md-4">
+                    <input type="text" id="classNameInput" class="form-control" placeholder="اسم المادة / الحصة (مثال: حاسوب - 10أ)">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-12">
+        <div class="card card-custom">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0" id="studentsTable">
+                        <thead class="table-light">
+                            <tr>
+                                <th>اسم الطالب</th>
+                                <th>الصف</th>
+                                <th>رصيد النقاط</th>
+                                <th>تسجيل الحضور</th>
+                                <th>التقييم السلوكي السريع</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in students %}
+                            <tr data-name="{{ s.name }}">
+                                <td class="fw-bold">{{ s.name }}</td>
+                                <td>{{ s.grade_class }}</td>
+                                <td><span class="badge bg-primary fs-6" id="points-{{ s.id }}">{{ s.points }}</span></td>
+                                <td>
+                                    <button class="btn btn-sm btn-success btn-log-attend" data-id="{{ s.id }}">
+                                        <i class="fa-solid fa-check me-1"></i> تسجيل حضور حصة
+                                    </button>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-success btn-points" data-id="{{ s.id }}" data-pts="5" data-reason="مشاركة متميزة">+5 مشاركة</button>
+                                    <button class="btn btn-sm btn-outline-danger btn-points" data-id="{{ s.id }}" data-pts="-5" data-reason="إزعاج / عدم انضباط">-5 إزعاج</button>
+                                    <button class="btn btn-sm btn-outline-warning text-dark btn-points" data-id="{{ s.id }}" data-pts="-10" data-reason="عدم إحضار الكتاب/الواجب">-10 واجب</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% endblock %}

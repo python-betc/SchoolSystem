@@ -1,0 +1,432 @@
+{% extends 'base.html' %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin_dashboard.css') }}">
+{% endblock %}
+
+{% block content %}
+<!-- الترويسة الرئيسية وأزرار الإجراءات -->
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+    <div>
+        <h3 class="fw-bold text-dark m-0">
+            <i class="fa-solid fa-chart-pie me-2 text-primary"></i> لوحة التحكم وملخص اليوم المدرسي
+        </h3>
+        <small class="text-muted">متابعة دقيقة للحضور عند البوابة، تحضير الحصص، وقفل/فك الحضور</small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="/reports/daily_pdf" target="_blank" class="btn btn-outline-danger fw-bold shadow-sm">
+            <i class="fa-solid fa-file-pdf me-1"></i> تقرير اليوم (PDF)
+        </a>
+        <button class="btn btn-warning fw-bold shadow-sm" onclick="triggerAudit()">
+            <i class="fa-solid fa-magnifying-glass-chart me-1"></i> فحص التسرب الآن
+        </button>
+    </div>
+</div>
+
+<!-- عرض الرسائل التنبيهية -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }} alert-dismissible fade show p-3 mb-3" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<!-- كروت الإحصائيات السريعة -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card card-custom p-3 bg-primary text-white shadow-sm h-100">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="mb-1 opacity-75">إجمالي الطلاب</h6>
+                    <h2 class="fw-bold mb-0">{{ total }}</h2>
+                </div>
+                <i class="fa-solid fa-users fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-custom p-3 bg-success text-white shadow-sm h-100">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="mb-1 opacity-75">حضور البوابة اليوم</h6>
+                    <h2 class="fw-bold mb-0">{{ present }}</h2>
+                </div>
+                <i class="fa-solid fa-door-open fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-custom p-3 bg-info text-white shadow-sm h-100">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="mb-1 opacity-75">حاضرو الحصص اليوم</h6>
+                    <h2 class="fw-bold mb-0">{{ period_present }}</h2>
+                </div>
+                <i class="fa-solid fa-chalkboard-user fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-custom p-3 bg-danger text-white shadow-sm h-100">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="mb-1 opacity-75">الغائبون عن البوابة</h6>
+                    <h2 class="fw-bold mb-0">{{ absent }}</h2>
+                </div>
+                <i class="fa-solid fa-user-slash fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- قسم المتابعة اليومية التفصيلية للغياب والتسرب -->
+<div class="row g-3 mb-4">
+    <!-- 1. جدول الطلاب الغائبين عن البوابة -->
+    <div class="col-lg-6">
+        <div class="card card-custom shadow-sm border-0 h-100">
+            <div class="card-header bg-danger text-white d-flex justify-content-between align-items-center py-2 px-3">
+                <h6 class="m-0 fw-bold fs-6">
+                    <i class="fa-solid fa-user-xmark me-1"></i> الغائبون عن البوابة اليوم ({{ absent_students|length }})
+                </h6>
+                {% if absent_students %}
+                <form id="notifyAllAbsentForm" action="/admin/notify_all_absent" method="POST" class="m-0">
+                    <button type="submit" class="btn btn-sm btn-light text-danger fw-bold shadow-sm py-1 px-2 btn-notify-all">
+                        <i class="fa-brands fa-telegram text-primary me-1"></i> إشعار الكل
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+            <div class="card-body p-0 table-scrollable-container">
+                <table class="table table-hover align-middle mb-0 text-center table-dashboard-sm">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th>#</th>
+                            <th class="text-start">اسم الطالب</th>
+                            <th>الصف والشعبة</th>
+                            <th>الإجراءات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for student in absent_students %}
+                        <tr>
+                            <td class="text-muted small">{{ loop.index }}</td>
+                            <td class="fw-bold text-dark text-start">{{ student.name }}</td>
+                            <td><span class="badge bg-secondary-subtle text-secondary border">{{ student.grade_class }}</span></td>
+                            <td>
+                                {% if student.parent_telegram_id %}
+                                <form action="/admin/notify_parent" method="POST" class="d-inline">
+                                    <input type="hidden" name="student_id" value="{{ student.id }}">
+                                    <input type="hidden" name="msg_type" value="absence">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2 fw-bold" title="إرسال تنبيه غياب لولي الأمر">
+                                        <i class="fa-brands fa-telegram me-1"></i> إشعار
+                                    </button>
+                                </form>
+                                {% else %}
+                                <span class="badge bg-light text-muted border">غير مربوط</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="text-success p-4 fw-bold">
+                                🎉 ممتاز! جميع الطلاب سجلوا حضور عند البوابة اليوم.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. جدول الطلاب المتسربين عن الحصص -->
+    <div class="col-lg-6">
+        <div class="card card-custom shadow-sm border-0 h-100">
+            <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center py-2 px-3">
+                <h6 class="m-0 fw-bold fs-6">
+                    <i class="fa-solid fa-triangle-exclamation me-1"></i> حالات التسرب والغياب عن الحصص اليوم ({{ leakers_students|length }})
+                </h6>
+                <span class="badge bg-dark text-warning fw-bold">دخلوا البوابة ونقصت حصصهم</span>
+            </div>
+            <div class="card-body p-0 table-scrollable-container">
+                <table class="table table-hover align-middle mb-0 text-center table-dashboard-sm">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th class="text-start">اسم الطالب</th>
+                            <th>الصف والشعبة</th>
+                            <th>الحصص</th>
+                            <th>الإجراءات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in leakers_students %}
+                        <tr>
+                            <td class="fw-bold text-dark text-start">{{ item.student.name }}</td>
+                            <td><span class="badge bg-secondary-subtle text-secondary border">{{ item.student.grade_class }}</span></td>
+                            <td><span class="badge bg-danger-subtle text-danger border border-danger-subtle">غياب {{ item.missing }} حصة</span></td>
+                            <td>
+                                {% if item.student.parent_telegram_id %}
+                                <form action="/admin/notify_parent" method="POST" class="d-inline">
+                                    <input type="hidden" name="student_id" value="{{ item.student.id }}">
+                                    <input type="hidden" name="msg_type" value="leak">
+                                    <button type="submit" class="btn btn-sm btn-warning text-dark py-0 px-2 fw-bold" title="إرسال تنبيه تسرب لولي الأمر">
+                                        <i class="fa-brands fa-telegram me-1"></i> تنبيه
+                                    </button>
+                                </form>
+                                {% else %}
+                                <span class="badge bg-light text-muted border">غير مربوط</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="text-muted p-4">
+                                ✅ جميع الطلاب الحاضرين ملتزمون بكافة الحصص حتى الآن.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- التحكم بصلاحيات مسح البوابة والقفل التلقائي -->
+<div class="row g-4 mb-4">
+    <!-- 1. فتح صلاحية مسح مؤقتة لمعلم -->
+    <div class="col-lg-6">
+        <div class="card card-custom p-4 bg-white shadow-sm border-start border-4 border-warning h-100">
+            <h5 class="fw-bold text-dark mb-2">
+                <i class="fa-solid fa-user-lock text-warning me-2"></i> فتح صلاحية مسح البوابة لمعلم
+            </h5>
+            <p class="text-muted small mb-3">اختر المعلم وحدد مدة الفتح بالدقائق. سيعود النظام للغلق التلقائي بحق المعلم فور انتهاء الوقت.</p>
+
+            <form action="/admin/toggle_gate_lock" method="POST" class="row g-2 align-items-end">
+                <div class="col-12 col-md-6">
+                    <label class="form-label fw-bold small text-muted">اختر المعلم:</label>
+                    <select name="teacher_id" class="form-select form-select-sm" required>
+                        <option value="" disabled selected>-- اختر المعلم --</option>
+                        {% for teacher in teachers %}
+                            <option value="{{ teacher.id }}">
+                                {{ teacher.name }}
+                                {% if teacher.gate_scan_unlock_until and teacher.gate_scan_unlock_until > now %}
+                                    (🔓 مفتوح حتى {{ teacher.gate_scan_unlock_until.strftime('%I:%M %p') }})
+                                {% endif %}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-6 col-md-3">
+                    <label class="form-label fw-bold small text-muted">المدة (دقيقة):</label>
+                    <input type="number" name="duration_minutes" class="form-control form-control-sm" value="15" min="1" max="180" required>
+                </div>
+
+                <div class="col-6 col-md-3">
+                    <button type="submit" class="btn btn-warning btn-sm w-100 fw-bold shadow-sm">
+                        <i class="fa-solid fa-lock-open me-1"></i> فتح الصلاحية
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 2. تحديد وقت إغلاق شاشة البوابة اليومي التلقائي -->
+    <div class="col-lg-6">
+        <div class="card card-custom p-4 bg-white shadow-sm border-start border-4 border-danger h-100">
+            <h5 class="fw-bold text-dark mb-2">
+                <i class="fa-solid fa-clock text-danger me-2"></i> وقت القفل التلقائي لشاشة البوابة
+            </h5>
+            <p class="text-muted small mb-3">حدد الوقت النهائي اليومي لإغلاق شاشة مسح البوابة وإخفائها عند كافة المعلمين تلقائياً.</p>
+
+            <form action="/admin/set_gate_cutoff_time" method="POST" class="row g-2 align-items-end">
+                <div class="col-12 col-md-8">
+                    <label class="form-label fw-bold small text-muted">ساعة القفل اليومي:</label>
+                    <input type="time" name="gate_cutoff_time" class="form-control form-control-sm" value="{{ settings.gate_cutoff_time if settings and settings.gate_cutoff_time else '08:30' }}" required>
+                </div>
+
+                <div class="col-12 col-md-4">
+                    <button type="submit" class="btn btn-danger btn-sm w-100 fw-bold shadow-sm">
+                        <i class="fa-solid fa-floppy-disk me-1"></i> حفظ الوقت
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- كارت إعدادات اللائحة والتليجرام -->
+    <div class="col-lg-7">
+        <div class="card card-custom p-4 bg-white shadow-sm border-start border-4 border-primary mb-4">
+            <h5 class="fw-bold text-dark mb-2">
+                <i class="fa-brands fa-telegram text-primary me-2"></i> ربط وتنشيط بوت التليجرام
+            </h5>
+            <p class="text-muted small mb-2">لربط حسابات أولياء الأمور تلقائياً، اطلب منهم إرسال <strong>كود الطالب</strong> (مثلاً <code>STU-1234</code>) إلى البوت مباشرة.</p>
+            <div class="alert alert-info py-2 small mb-3">
+                رابط البوت لأولياء الأمور: <a href="https://t.me/YourBotUsername" target="_blank" class="fw-bold">اضغط هنا للتوجيه</a>
+            </div>
+            <form action="/admin/sync_telegram_webhook" method="POST">
+                <button type="submit" class="btn btn-outline-primary btn-sm fw-bold">
+                    <i class="fa-solid fa-rotate me-1"></i> تنشيط استقبال الرسائل الآلي (Webhook)
+                </button>
+            </form>
+        </div>
+
+        <div class="card card-custom p-4 bg-white shadow-sm border-start border-4 border-warning">
+            <h5 class="fw-bold text-dark mb-3">
+                <i class="fa-solid fa-sliders text-warning me-2"></i> إعدادات اللائحة ودوام اليوم
+            </h5>
+
+            <form action="/admin/update_attendance_settings" method="POST" class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-bold small text-muted">حصص اليوم المنعقدة فعلياً:</label>
+                    <div class="input-group">
+                        <input type="number" name="daily_actual_lessons" class="form-control" value="{{ settings.daily_actual_lessons if settings else 6 }}" min="1" max="10" required>
+                        <span class="input-group-text bg-light fw-bold">حصص</span>
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label fw-bold small text-muted">معادِل (1 يوم غياب كامل):</label>
+                    <div class="input-group">
+                        <input type="number" name="periods_per_absent_day" class="form-control" value="{{ settings.periods_per_absent_day if settings else 5 }}" min="1" required>
+                        <span class="input-group-text bg-light fw-bold">حصص</span>
+                    </div>
+                </div>
+
+                <div class="col-md-8">
+                    <label class="form-label fw-bold small text-muted">حد الغياب لإرسال تنبيه واستدعاء:</label>
+                    <div class="input-group">
+                        <input type="number" name="max_absent_days_warning" class="form-control" value="{{ settings.max_absent_days_warning if settings else 15 }}" min="1" required>
+                        <span class="input-group-text bg-light fw-bold">أيام</span>
+                    </div>
+                </div>
+
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="submit" class="btn btn-warning w-100 fw-bold shadow-sm">
+                        <i class="fa-solid fa-floppy-disk me-1"></i> حفظ
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- كارت المعلم البديل -->
+    <div class="col-lg-5">
+        <div class="card card-custom p-4 bg-white shadow-sm border-start border-4 border-info h-100">
+            <h5 class="fw-bold text-dark mb-3">
+                <i class="fa-solid fa-user-clock text-info me-2"></i> إسناد معلم بديل (معلم غائب اليوم)
+            </h5>
+
+            <form action="/admin/substitute_teacher" method="POST" class="row g-3">
+                <div class="col-12">
+                    <label class="form-label fw-bold small text-muted">اختر الصف والمادة للمعلم الغائب:</label>
+                    <select name="assignment_id" class="form-select form-select-sm" required>
+                        <option value="" disabled selected>-- اختر الحصة والإسناد الأصلي --</option>
+                        {% for assign in assignments %}
+                            <option value="{{ assign.id }}">
+                                {{ assign.school_class.name }} - {{ assign.subject.name }} (المعلم الأصلي: {{ assign.teacher.name }})
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-12">
+                    <label class="form-label fw-bold small text-muted">اختر المعلم البديل لليوم فقط:</label>
+                    <select name="substitute_teacher_id" class="form-select form-select-sm" required>
+                        <option value="" disabled selected>-- اختر المعلم البديل --</option>
+                        {% for teacher in teachers %}
+                            <option value="{{ teacher.id }}">{{ teacher.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-12">
+                    <button type="submit" class="btn btn-info text-white w-100 fw-bold shadow-sm">
+                        <i class="fa-solid fa-right-left me-1"></i> إسناد مؤقت لليوم
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- جدول الطلاب والنقاط -->
+<div class="card card-custom p-4 shadow-sm bg-white">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+        <h5 class="fw-bold m-0 text-dark">
+            <i class="fa-solid fa-list-check me-2 text-primary"></i> حالة الطلاب والنقاط والانضباط
+        </h5>
+        <div class="search-box-container">
+            <input type="text" id="studentSearch" class="form-control form-control-sm" placeholder="🔍 بحث باسم الطالب أو الصف أو الكود...">
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle border" id="studentsTable">
+            <thead class="table-light">
+                <tr>
+                    <th>الكود</th>
+                    <th>اسم الطالب</th>
+                    <th>الصف والشعبة</th>
+                    <th>غياب الحصص</th>
+                    <th>أيام الغياب</th>
+                    <th>رصيد النقاط</th>
+                    <th>تليجرام ولي الأمر</th>
+                    <th class="text-center">الإجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for student in students %}
+                <tr>
+                    <td><code>{{ student.student_code }}</code></td>
+                    <td class="fw-bold text-dark">{{ student.name }}</td>
+                    <td><span class="badge bg-secondary-subtle text-secondary border">{{ student.grade_class }}</span></td>
+                    <td><span class="badge bg-light text-dark border">{{ student.absent_periods_count|default(0) }} حصة</span></td>
+                    <td>
+                        {% if student.warning_sent %}
+                            <span class="badge bg-danger text-white fw-bold"><i class="fa-solid fa-triangle-exclamation me-1"></i>{{ student.absent_days_count|default(0) }} يوم</span>
+                        {% else %}
+                            <span class="badge bg-light text-dark border">{{ student.absent_days_count|default(0) }} يوم</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if student.points >= 80 %}bg-success{% elif student.points >= 50 %}bg-warning text-dark{% else %}bg-danger{% endif %} fs-6 px-3">
+                            {{ student.points }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if student.parent_telegram_id %}
+                            <span class="badge bg-info-subtle text-info border border-info-subtle">
+                                <i class="fa-brands fa-telegram me-1"></i>{{ student.parent_telegram_id }}
+                            </span>
+                        {% else %}
+                            <span class="badge bg-light text-muted border">غير مربوط</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <a href="/reports/student/{{ student.id }}" target="_blank" class="btn btn-sm btn-outline-primary fw-bold">
+                            <i class="fa-solid fa-file-invoice me-1"></i> التقرير الشامل
+                        </a>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8" class="text-center text-muted py-4">لا يوجد طلاب مسجلون في النظام حالياً</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/admin_dashboard.js') }}"></script>
+{% endblock %}

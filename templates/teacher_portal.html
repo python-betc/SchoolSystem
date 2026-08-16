@@ -1,0 +1,195 @@
+{% extends 'base.html' %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="row mb-3 align-items-center">
+    <div class="col">
+        <h3 class="fw-bold text-dark m-0 fs-4">
+            <i class="fa-solid fa-chalkboard-user text-primary me-2"></i> بوابتي التعليمية
+        </h3>
+        <p class="text-muted small mb-0">أهلاً بك أستاذ <strong>{{ current_user.name }}</strong>، اختر الصف والمادة لمتابعة طلابك.</p>
+    </div>
+</div>
+
+<!-- عرض الرسائل التنبيهية -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }} alert-dismissible fade show p-3 mb-3" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<!-- 1. قسم مسح البوابة / الطابور الصباحي -->
+<div class="card card-custom p-3 p-md-4 bg-white shadow-sm mb-4 border-start border-4 {% if not show_gate_scan %}border-danger{% else %}border-primary{% endif %}">
+    {% if not show_gate_scan %}
+        <!-- حالة إغلاق شاشة المسح وإخفائها -->
+        <div class="py-2 text-center">
+            <div class="mb-2">
+                <i class="fa-solid fa-lock text-danger display-6"></i>
+            </div>
+            <h5 class="fw-bold text-dark mb-1">شاشة مسح حضور البوابة مغلقة حالياً</h5>
+            <p class="text-muted small mb-2">انتهت الفترة المحددة لتسجيل الحضور اليومي عند البوابة أو تم تقييد الصلاحية من الإدارة.</p>
+            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning px-3 py-2">
+                <i class="fa-solid fa-circle-info me-1"></i> إذا كان لديك طالب متأخر، يُرجى طلب فتح الصلاحية المؤقتة من إدارة المدرسة.
+            </span>
+        </div>
+    {% else %}
+        <!-- حالة فتح شاشة المسح والكاميرا -->
+        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+            <h5 class="fw-bold text-primary m-0 fs-6 fs-md-5">
+                <i class="fa-solid fa-qrcode me-2"></i> مسح حضور البوابة / الطابور الصباحي
+            </h5>
+            <button id="camera-btn" type="button" class="btn btn-sm btn-outline-primary fw-bold" onclick="toggleCamera()">
+                <i class="fa-solid fa-camera me-1"></i> <span id="camera-btn-text">فتح الكاميرا</span>
+            </button>
+        </div>
+
+        <p class="text-muted small mb-3">وجّه كاميرا الهاتف نحو رمز QR الخاص بالطالب للتسجيل التلقائي السريع.</p>
+
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-5">
+                <div id="qr-reader" class="qr-reader-container border rounded shadow-sm overflow-hidden bg-black position-relative">
+                    <div id="qr-scanner-view" class="qr-scanner-view"></div>
+                </div>
+            </div>
+
+            <div class="col-12 col-md-7">
+                <form id="gate-scan-form" action="/teacher/scan_gate" method="POST">
+                    <label class="form-label fw-bold small text-secondary">إدخال يدوي / قارئ باركود:</label>
+                    <div class="input-group">
+                        <input type="text" id="student_code_input" name="student_code" class="form-control form-control-lg fs-6" placeholder="امسح أو اكتب كود الطالب..." autofocus required>
+                        <button type="submit" class="btn btn-primary fw-bold px-3">
+                            <i class="fa-solid fa-check me-1"></i> تسجيل
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    {% endif %}
+</div>
+
+<!-- 2. كروت اختيار الصفوف والمواد المسندة -->
+<div class="card card-custom p-3 p-md-4 bg-white shadow-sm mb-4">
+    <h5 class="fw-bold mb-3 fs-6 fs-md-5"><i class="fa-solid fa-layer-group text-primary me-2"></i> الصفوف والمواد المسندة إليك</h5>
+
+    <div class="row g-2 g-md-3">
+        {% for assign in assignments %}
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card border {% if selected_class and selected_class.id == assign.class_id and selected_subject and selected_subject.id == assign.subject_id %}border-primary bg-primary text-white{% else %}bg-light text-dark{% endif %} h-100 shadow-sm">
+                <div class="card-body p-2 p-md-3 text-center d-flex flex-column justify-content-between">
+                    <div>
+                        <span class="badge {% if selected_class and selected_class.id == assign.class_id and selected_subject and selected_subject.id == assign.subject_id %}bg-white text-primary{% else %}bg-primary{% endif %} mb-2 small">
+                            {{ assign.subject.name }}
+                        </span>
+                        <h6 class="fw-bold mb-1">{{ assign.school_class.name }}</h6>
+                    </div>
+                    <a href="/teacher?class_id={{ assign.class_id }}&subject_id={{ assign.subject_id }}"
+                       class="btn btn-sm {% if selected_class and selected_class.id == assign.class_id and selected_subject and selected_subject.id == assign.subject_id %}btn-light text-primary fw-bold{% else %}btn-outline-primary{% endif %} mt-2 w-100">
+                        <i class="fa-solid fa-users me-1"></i> دخول الحصة
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-12 text-center text-muted py-4">
+            <i class="fa-solid fa-circle-exclamation fa-2x mb-2 text-warning"></i>
+            <p class="m-0">لم يتم إسناد أي صفوف أو مواد لك حتى الآن.</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- 3. جدول إدارة الحصة -->
+{% if selected_class %}
+<div class="card card-custom p-3 p-md-4 bg-white shadow-sm mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h5 class="fw-bold m-0 text-dark fs-6 fs-md-5">
+            <i class="fa-solid fa-users-viewfinder me-2 text-primary"></i>
+            حصة: <span class="text-primary">{{ selected_class.name }}</span>
+            {% if selected_subject %}- <span class="text-success">{{ selected_subject.name }}</span>{% endif %}
+        </h5>
+        <span class="badge bg-secondary fs-6">عدد الطلاب: {{ students|length }}</span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle border teacher-class-table">
+            <thead class="table-light">
+                <tr>
+                    <th style="width: 4%;">#</th>
+                    <th style="width: 11%;">الكود</th>
+                    <th style="width: 20%;">اسم الطالب</th>
+                    <th style="width: 10%;">النقاط</th>
+                    <th style="width: 13%;" class="text-center">1. تسجيل الحضور</th>
+                    <th style="width: 18%;">تقييم السلوك</th>
+                    <th style="width: 14%;">الملاحظة</th>
+                    <th style="width: 10%;" class="text-center">2. حفظ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for student in students %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td><code>{{ student.student_code }}</code></td>
+                    <td class="fw-bold">{{ student.name }}</td>
+                    <td><span class="badge bg-warning text-dark fs-6">{{ student.points }}</span></td>
+
+                    <td class="text-center border-end">
+                        <form action="/teacher/mark_attendance" method="POST" class="m-0">
+                            <input type="hidden" name="student_code" value="{{ student.student_code }}">
+                            <input type="hidden" name="class_name" value="{{ selected_class.name }}">
+                            <input type="hidden" name="subject_name" value="{{ selected_subject.name if selected_subject else '' }}">
+                            <button type="submit" class="btn btn-sm btn-success w-100 fw-bold py-2">
+                                <i class="fa-solid fa-user-check me-1"></i> حاضر
+                            </button>
+                        </form>
+                    </td>
+
+                    <form action="/teacher/save_behavior" method="POST" class="m-0">
+                        <input type="hidden" name="student_code" value="{{ student.student_code }}">
+                        <input type="hidden" name="class_name" value="{{ selected_class.name }}">
+                        <input type="hidden" name="subject_name" value="{{ selected_subject.name if selected_subject else '' }}">
+
+                        <td>
+                            <select name="points" class="form-select form-select-sm py-2">
+                                <option value="0">0 (بدون)</option>
+                                <option value="5" selected>+5 (مشاركة)</option>
+                                <option value="10">+10 (تميز)</option>
+                                <option value="-5">-5 (تأخر)</option>
+                                <option value="-10">-10 (مخالفة)</option>
+                            </select>
+                        </td>
+
+                        <td>
+                            <input type="text" name="note" class="form-control form-control-sm py-2" placeholder="ملاحظة...">
+                        </td>
+
+                        <td class="text-center">
+                            <button type="submit" class="btn btn-sm btn-outline-primary w-100 fw-bold py-2">
+                                <i class="fa-solid fa-floppy-disk me-1"></i> حفظ
+                            </button>
+                        </td>
+                    </form>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8" class="text-center text-muted py-4">لا يوجد طلاب مسجلون في هذا الصف حالياً.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% endblock %}

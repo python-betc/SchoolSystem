@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/gate_scan.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 text-center">
+        <div class="card card-custom p-4">
+            <h3 class="mb-3 text-primary"><i class="fa-solid fa-qrcode me-2"></i> مسح دخول البوابة اليومي</h3>
+            <p class="text-muted">وجه بطاقة الطالب (QR) أمام الكاميرا لتسجيل الدخول</p>
+
+            <!-- منطقة الكاميرا -->
+            <div id="reader" class="qr-reader-box"></div>
+
+            <!-- النتيجة الظاهرة بعد المسح -->
+            <div id="scan-result" class="mt-4 p-3 rounded scan-result-box">
+                <h2 id="student-name" class="fw-bold mb-1">---</h2>
+                <h5 id="student-class" class="text-muted mb-2">---</h5>
+                <div class="badge bg-success fs-6 p-2 mb-2" id="scan-time">--:--</div>
+                <div class="fs-5 text-dark">رصيد النقاط: <span id="student-points" class="fw-bold text-primary">100</span></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="{{ url_for('static', filename='js/gate_scan.js') }}"></script>
+{% endblock %}
