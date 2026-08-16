@@ -37,6 +37,10 @@ app = Flask(__name__)
 
 database_url = os.environ.get("DATABASE_URL")
 
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
 if database_url:
     # تعديل رابط قاعدة البيانات إذا كان يبدأ بـ postgres:// ليناسب SQLAlchemy
     if database_url.startswith("postgres://"):
