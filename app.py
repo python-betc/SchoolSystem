@@ -777,11 +777,14 @@ def import_students():
         return redirect(url_for("students_manage"))
 
     try:
-        df = (
-            pd.read_csv(file)
-            if file.filename.endswith(".csv")
-            else pd.read_excel(file)
-        )
+        if file.filename.endswith(".csv"):
+            try:
+                df = pd.read_csv(file, encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                file.seek(0)
+                df = pd.read_csv(file, encoding="cp1256")
+        else:
+            df = pd.read_excel(file)
 
         qr_dir = os.path.join(app.static_folder or "static", "qrcodes")
         os.makedirs(qr_dir, exist_ok=True)
