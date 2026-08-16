@@ -2,6 +2,8 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<!-- استدعاء مكتبة توليد الـ QR لحظياً -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -133,7 +135,7 @@
                                        data-name="{{ student.name }}"
                                        data-grade="{{ student.grade_class }}"
                                        data-code="{{ student.student_code }}"
-                                       data-qr="/static/qrcodes/{{ student.student_code }}.png"
+                                       data-qr="js-generated"
                                        onchange="updateSelectedCount()">
                             </td>
                             <td class="fw-bold text-primary search-target"><code>{{ student.student_code }}</code></td>
@@ -151,7 +153,7 @@
                                 {% endif %}
                             </td>
 
-                            <!-- عمود اسم ولي الأمر في تليجرام بدلاً من Username -->
+                            <!-- عمود اسم ولي الأمر في تليجرام -->
                             <td>
                                 {% if student.parent_telegram_name %}
                                     <span class="fw-bold text-dark">
@@ -162,19 +164,26 @@
                                 {% endif %}
                             </td>
 
+                            <!-- عمود توليد وعرض وطباعة الـ QR لحظياً -->
                             <td>
                                 <div class="d-flex align-items-center justify-content-center gap-2">
-                                    <img src="/static/qrcodes/{{ student.student_code }}.png"
-                                         alt="QR Code"
-                                         class="qr-thumb-img"
-                                         onclick="printSingleQR('{{ student.name }}', '{{ student.grade_class }}', '{{ student.student_code }}', '/static/qrcodes/{{ student.student_code }}.png')">
+                                    <div id="qrcode-{{ student.student_code }}" style="width: 50px; height: 50px; cursor: pointer;"
+                                         onclick="printSingleQR('{{ student.name }}', '{{ student.grade_class }}', '{{ student.student_code }}')"></div>
+                                    <script>
+                                        new QRCode(document.getElementById("qrcode-{{ student.student_code }}"), {
+                                            text: "{{ student.student_code }}",
+                                            width: 50,
+                                            height: 50
+                                        });
+                                    </script>
 
                                     <button class="btn btn-sm btn-outline-dark fw-bold"
-                                            onclick="printSingleQR('{{ student.name }}', '{{ student.grade_class }}', '{{ student.student_code }}', '/static/qrcodes/{{ student.student_code }}.png')">
+                                            onclick="printSingleQR('{{ student.name }}', '{{ student.grade_class }}', '{{ student.student_code }}')">
                                         <i class="fa-solid fa-print me-1"></i> طباعة
                                     </button>
                                 </div>
                             </td>
+
                             <td>
                                 <div class="d-flex justify-content-center align-items-center gap-2">
                                     <!-- زر تعديل / نقل -->

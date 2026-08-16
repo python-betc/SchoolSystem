@@ -767,6 +767,11 @@ def update_attendance_settings():
     flash("تم تحديث لائحة الغياب وعدد حصص اليوم بنجاح!", "success")
     return redirect(url_for("admin_dashboard"))
 
+import io
+import base64
+import qrcode
+from io import BytesIO
+
 @app.route("/admin/import_students", methods=["POST"])
 @admin_required
 def import_students():
@@ -788,10 +793,6 @@ def import_students():
         else:
             df = pd.read_excel(file_stream)
 
-        # استخدام المسار المطلق الآمن لمجلد الـ QR
-        qr_dir = os.path.join(app.root_path, "static", "qrcodes")
-        os.makedirs(qr_dir, exist_ok=True)
-
         def clean_val(val):
             if val is None or pd.isna(val):
                 return ""
@@ -802,7 +803,6 @@ def import_students():
                 return ""
             return s
 
-        # تحميل البيانات مسبقاً في ذاكرة مؤقتة لتقليل استعلامات قاعدة البيانات ومنع انهيار الذاكرة
         classes_cache = {c.name: c.id for c in SchoolClass.query.all()}
         parents_cache = {p.telegram_id: p.id for p in Parent.query.all() if p.telegram_id}
 
@@ -826,16 +826,14 @@ def import_students():
             if not name or not grade_class:
                 continue
 
-            # معالجة الصفوف عبر التخزين المؤقت
             class_id = classes_cache.get(grade_class)
             if not class_id:
                 new_class = SchoolClass(name=grade_class)
                 db.session.add(new_class)
-                db.session.flush()  # للحصول على الـ ID فوراً بدون إثقال الخادم
+                db.session.flush()
                 class_id = new_class.id
                 classes_cache[grade_class] = class_id
 
-            # معالجة أولياء الأمور عبر التخزين المؤقت
             parent_id = None
             if telegram_id and telegram_id != "0":
                 parent_id = parents_cache.get(telegram_id)
@@ -857,17 +855,11 @@ def import_students():
                 parent_telegram_id=telegram_id if telegram_id and telegram_id != "0" else None,
             )
             db.session.add(new_student)
-
-            # توليد وتخزين رمز الـ QR
-            qr_img = qrcode.make(auto_code)
-            qr_img.save(os.path.join(qr_dir, f"{auto_code}.png"))
-
             added_count += 1
 
-        # الحفظ النهائي دفعة واحدة لتوفير الذاكرة ومنع الـ 502
         db.session.commit()
         flash(
-            f"تمت إضافة {added_count} طالب بنجاح وتوليد رموز الـ QR لهم!",
+            f"تمت إضافة {added_count} طالب بنجاح!",
             "success",
         )
 
